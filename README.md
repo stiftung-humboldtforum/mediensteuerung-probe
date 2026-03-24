@@ -1,96 +1,235 @@
-# Avorus-Probe
+# Humboldt-Probe
 
-Avorus-probe is a critical software component of the Avorus suite designed to be installed on computers within AV/Digital Media installations. It enables these computers to communicate with the manager service of an Avorus deployment, providing real-time control, reporting as health and status metrics back to the system.
+Humboldt-Probe is a software component designed to be installed on computers within AV/Digital Media installations. It enables these computers to communicate with a manager service, providing real-time control and reporting health and status metrics back to the system via MQTT.
 
 ## Features
 
-- **MQTT Integration:** Establishes a secure client connection to an MQTT broker for telemetry and command message exchange.
-- **Service Watchdog:** Utilizes `sd_notify` for systemd service notification support, keeping the system manager informed about the service's state.
-- **Dynamic Configuration:** Supports loading configurations from a file for tailored operations on different systems.
-- **Resilience:** Built-in retry mechanism that ensures steady operation despite intermittent network issues or exceptions.
-- **Secure Communication:** Leverages TLS for secure MQTT communication, ensuring confidentiality and integrity of messages.
-- **Runtime Status:** Regular log output for monitoring the fully qualified domain name (FQDN) of the host and connection status to the MQTT broker.
+- **MQTT Integration:** Secure client connection to an MQTT broker for telemetry and command exchange.
+- **Cross-Platform:** Runs on Linux and Windows with platform-specific sensor implementations.
+- **Hardware Monitoring:** CPU/GPU temperatures and fan speeds via psutil (Linux) or LibreHardwareMonitor (Windows).
+- **Audio Control:** Mute/unmute via wpctl/PipeWire (Linux) or pycaw/COM (Windows).
+- **Service Watchdog:** Utilizes `sd_notify` for systemd notification (Linux).
+- **Resilience:** Built-in retry mechanism for intermittent network issues.
+- **Secure Communication:** TLS support for MQTT.
+
+## Project Structure
+
+```
+humboldt-probe/
+  src/
+    app.py              # Main entry point (CLI, MQTT client, lifecycle)
+    probe.py            # Probe thread (periodic sensor polling, command handling)
+    methods/
+      __init__.py       # Capabilities (shutdown, reboot, mute, unmute, ping)
+      sensors.py        # Probe methods (temperatures, fans, uptime, display, ...)
+    misc/
+      __init__.py       # Config parser, logger, response helpers
+  lib/
+    win32/              # LibreHardwareMonitor DLLs (Windows only)
+  tests/
+    conftest.py         # Test configuration (sys.path setup)
+    test_misc.py        # Tests for config parsing, response helpers
+    test_methods.py     # Tests for sensor methods, call_method
+    test_probe.py       # Tests for probe init, callbacks, security
+  requirements.txt
+  userconfig.example.txt
+```
+
+## MQTT Topics
+
+The probe uses two topic prefixes:
+
+- **`probe/<fqdn>/...`** — Outbound: sensor data and command responses published by the probe.
+- **`manager/<fqdn>/...`** — Inbound: commands sent to the probe from the manager.
 
 ## System Requirements
 
-- A machine running within an AV/Digital Media installation with network access to the MQTT broker set up for Avorus.
-- Python 3.x environment with required packages installed.
+### Linux
+
+- Python 3.x
+- Network access to the MQTT broker
+- wpctl (PipeWire/WirePlumber) for audio control
+- xrandr for display info
+
+### Windows
+
+- Python 3.13+ (system-wide installation, not Windows Store)
+- Network access to the MQTT broker
+- LibreHardwareMonitorLib.dll + HidSharp.dll in `lib/win32/` (included)
+- NSSM for running as a service
 
 ## Installation
 
-1. Ensure Python 3.x is installed on the target machine.
-2. Install required Python packages using `pip install -r requirements.txt`.
-3. Place `src` in the desired directory.
-4. Place certificates and private key in the desired directory.
-5. Configure system service (if needed) to manage the avorus-probe lifecycle.
+### Linux
+
+```bash
+pip install -r requirements.txt
+```
+
+### Windows
+
+1. Install Python system-wide: `winget install Python.Python.3.13 --scope machine`
+2. Install dependencies:
+   ```
+   pip install -r requirements.txt
+   ```
+   Note: `paho-mqtt` must be version 1.6.1 (v2.x has breaking API changes).
 
 ## Usage
 
-Run `app.py` via the command line or set it as a service with the following mandatory options:
-
-- `--config_file`: Path to the configuration file.
-- `--mqtt_hostname`: Hostname of the MQTT Broker.
-- `--mqtt_port`: Port number of the MQTT Broker (default: 8883).
-- `--ca_certificate`: Path to the CA certificate for TLS.
-- `--certfile`: Path to the client's certificate file for TLS.
-- `--keyfile`: Path to the client's key file for TLS.
-- `--loglevel`: Logging level (CRITICAL, ERROR, WARNING, INFO, DEBUG).
-
-## Configuration
-
-`--config_file` is expected to contain two variables with comma seperated values.
-
-`PROBE_METHODS` are the methods that are being run periodically, their result being sent via MQTT to the manager.
-
-`PROBE_CAPABILITIES` are reported to the manager and define which methods can be run on this instance of the probe.
-
-### Available `PROBE_METHODS`
-
-| Method name      | Description                                  | Linux | Windows |
-| ---------------- | -------------------------------------------- | ----- | ------- |
-| ping             | Signal that the device is alive              | ✅    | ✅      |
-| uptime           | Time since boot                              | ✅    | ❌      |
-| fans             | Fan speeds (lm_sensors)                      | ✅    | ❌      |
-| temperatures     | CPU temps (lm_sensors)                       | ✅    | ❌      |
-| display          | Display resolution and refresh rate (xrandr) | ✅    | ❌      |
-| is_muted         | Audio mute                                   | ✅    | ✅      |
-| easire           | Health state of the easire client            | ✅    | ❌      |
-| mpv_file_pos_sec | Playback position of the mpv player          | ✅    | ❌      |
-
-### Available `PROBE_CAPABILITIES`
-
-| Method name | Description          | Linux | Windows |
-| ----------- | -------------------- | ----- | ------- |
-| wake        | Wake the device      | ✅    | ✅      |
-| shutdown    | Shut down the device | ✅    | ✅      |
-| reboot      | Reboot the device    | ✅    | ✅      |
-| mute        | Mute the audio       | ✅    | ✅      |
-| unumute     | Unmute the audio     | ✅    | ✅      |
-
-Example userconfig.txt:
-
 ```bash
-PROBE_METHODS="ping,fans,temperatures,uptime,display,is_muted"
-PROBE_CAPABILITIES="wake,shutdown,reboot,mute,unmute"
-```
-
-Example command:
-
-```bash
-python app.py \
-    --config_file "/path/to/userconfig.txt" \
-    --mqtt_hostname "mqtt.example.com" \
+python src/app.py \
+    --config_file userconfig.txt \
+    --mqtt_hostname mqtt.example.com \
     --mqtt_port 8883 \
-    --ca_certificate "/path/to/ca.pem" \
-    --certfile "/path/to/client_key.pem" \
-    --keyfile "/path/to/client_key.pem" \
+    --ca_certificate /path/to/ca.pem \
+    --certfile /path/to/client.pem \
+    --keyfile /path/to/client_key.pem \
     --loglevel INFO
 ```
 
-## Contact and Support
+### CLI Options
 
-For any issues or support related to Avorus-probe, refer to the main Avorus repository issues section or the support forums.
+| Option             | Description                                                    |
+| ------------------ | -------------------------------------------------------------- |
+| `--config_file`    | Path to the configuration file (required)                      |
+| `--mqtt_hostname`  | Hostname of the MQTT broker (required)                         |
+| `--mqtt_port`      | MQTT port (default: 8883, or 1883 with `--no_tls`)            |
+| `--ca_certificate` | CA certificate for TLS (required unless `--no_tls`)            |
+| `--certfile`       | Client certificate for TLS (required unless `--no_tls`)        |
+| `--keyfile`        | Client key for TLS (required unless `--no_tls`)                |
+| `--no_tls`         | Disable TLS (for local testing)                                |
+| `--loglevel`       | CRITICAL, ERROR, WARNING, INFO, DEBUG                          |
 
-## Contributions
+## Configuration
 
-Contributions to Avorus-probe are welcome. Please follow the contribution guidelines outlined in the main Avorus repository.
+The config file contains two comma-separated lists:
+
+```bash
+PROBE_METHODS="ping,temperatures,fans,uptime,display,is_muted,easire"
+PROBE_CAPABILITIES="wake,shutdown,reboot,mute,unmute"
+```
+
+`PROBE_METHODS` — Sensors polled every 5 seconds, results published via MQTT.
+
+`PROBE_CAPABILITIES` — Reported to the manager; defines which commands the probe accepts.
+
+### Available PROBE_METHODS
+
+| Method           | Description                         | Linux              | Windows                    |
+| ---------------- | ----------------------------------- | ------------------ | -------------------------- |
+| ping             | Signal that the device is alive     | -                  | -                          |
+| uptime           | Seconds since boot                  | /proc/uptime       | psutil                     |
+| temperatures     | CPU/GPU temperatures                | psutil             | LibreHardwareMonitor       |
+| fans             | CPU/GPU fan speeds                  | psutil             | LibreHardwareMonitor       |
+| display          | Display resolution and refresh rate | xrandr             | Win32 API (ctypes)         |
+| is_muted         | Audio mute state                    | wpctl              | pycaw                      |
+| easire           | easire-player process running       | ps/grep            | psutil                     |
+| mpv_file_pos_sec | Playback position of mpv player     | mpv_control        | -                          |
+
+### Available PROBE_CAPABILITIES
+
+| Capability | Description          | Linux              | Windows                    |
+| ---------- | -------------------- | ------------------ | -------------------------- |
+| wake       | Wake the device      | Wake-on-LAN (external) | Wake-on-LAN (external)     |
+| shutdown   | Shut down the device | sudo shutdown now  | shutdown /s /t 0           |
+| reboot     | Reboot the device    | sudo reboot now    | shutdown /r /t 0           |
+| mute       | Mute audio           | wpctl              | pycaw                      |
+| unmute     | Unmute audio         | wpctl              | pycaw                      |
+
+## Running as a Service
+
+### Linux (systemd)
+
+Create a systemd unit file and enable it. The probe supports `sd_notify` for watchdog integration.
+
+### Windows (NSSM)
+
+```powershell
+# Install NSSM
+winget install NSSM.NSSM
+
+# Install the service
+nssm install HumboldtProbe "C:\Program Files\Python313\python.exe" "app.py --config_file ../userconfig.txt --mqtt_hostname <broker-ip> --mqtt_port 1883 --no_tls --loglevel INFO"
+nssm set HumboldtProbe AppDirectory C:\path\to\humboldt-probe\src
+nssm set HumboldtProbe AppStdout C:\path\to\humboldt-probe\probe.log
+nssm set HumboldtProbe AppStderr C:\path\to\humboldt-probe\probe.log
+nssm set HumboldtProbe AppRotateFiles 1
+nssm set HumboldtProbe AppRotateBytes 1048576
+
+# Manage the service
+nssm start HumboldtProbe
+nssm stop HumboldtProbe
+nssm restart HumboldtProbe
+nssm status HumboldtProbe
+```
+
+NSSM automatically restarts the probe on crash and starts it on boot.
+
+## Local Testing
+
+### 1. Install Mosquitto
+
+**macOS:**
+```bash
+brew install mosquitto
+```
+
+**Linux (Debian/Ubuntu):**
+```bash
+sudo apt install mosquitto mosquitto-clients
+```
+
+**Windows:**
+```powershell
+winget install EclipseFoundation.Mosquitto
+```
+
+### 2. Start the broker
+
+```bash
+mosquitto -p 1883 -v
+```
+
+### 3. Start the probe
+
+```bash
+python src/app.py \
+    --config_file userconfig.txt \
+    --mqtt_hostname <broker-ip> \
+    --no_tls \
+    --loglevel DEBUG
+```
+
+### 4. Monitor sensor data
+
+With MQTT Explorer: connect to `<broker-ip>:1883`. All topics appear under `probe/<hostname>/`.
+
+Or via command line:
+
+```bash
+mosquitto_sub -h <broker-ip> -p 1883 -t 'probe/#' -v
+```
+
+### 5. Send commands
+
+```bash
+mosquitto_pub -h <broker-ip> -p 1883 -t 'manager/<hostname>/mute' -m ''
+mosquitto_pub -h <broker-ip> -p 1883 -t 'manager/<hostname>/unmute' -m ''
+mosquitto_pub -h <broker-ip> -p 1883 -t 'manager/<hostname>/reboot' -m ''
+```
+
+## Remote Development (Mac to Windows)
+
+With OpenSSH enabled on the Windows target, you can deploy changes directly:
+
+```bash
+# Deploy source files
+scp -r src/* user@<windows-ip>:C:/path/to/humboldt-probe/src/
+
+# Restart the service
+ssh user@<windows-ip> "nssm restart HumboldtProbe"
+
+# Test individual methods
+ssh user@<windows-ip> "cd C:\path\to\humboldt-probe\src && python -c \"from methods.sensors import temperatures; print(temperatures())\""
+```

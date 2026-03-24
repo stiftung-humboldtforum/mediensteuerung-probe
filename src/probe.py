@@ -1,7 +1,6 @@
 import time
 from threading import Thread
 from typing import Union, Callable
-import logging
 from inspect import getmembers, isfunction
 
 from paho.mqtt.client import Client, SubscribeOptions, MQTTMessage
@@ -16,9 +15,8 @@ class Probe(Thread):
     def __init__(self,
                  fqdn: str,
                  client: Client,
-                 config: dict,
-                 logger: logging.Logger):
-        super().__init__(target=self.run, daemon=True)
+                 config: dict):
+        super().__init__(daemon=True)
         self.fqdn = fqdn
         self.client = client
         self.config = config
@@ -33,18 +31,18 @@ class Probe(Thread):
 
         try:
             periodic_methods = self.config['PROBE_METHODS'].split(',')
-        except:
-            logger.critical('No PROBE_METHODS in userconfig.txt')
+        except Exception:
+            logger.error('No PROBE_METHODS in userconfig.txt')
             periodic_methods = []
 
         try:
             self.capabilities = self.config['PROBE_CAPABILITIES']
-        except:
-            logger.critical('No PROBE_CAPABILITIES in userconfig.txt')
+        except Exception:
+            logger.error('No PROBE_CAPABILITIES in userconfig.txt')
             self.capabilities = 'wake,shutdown,reboot'
 
-        self.methods = {name: function for name, function in getmembers(
-            methods, isfunction) if name in periodic_methods}
+        self._allowed_methods = set(self.capabilities.split(','))
+        self.methods = {name: function for name, function in getmembers(methods, isfunction) if name in periodic_methods}
         self.errors = {}
 
     def check_playback_pos(self):
@@ -56,22 +54,21 @@ class Probe(Thread):
         self.playback_pos = new_playback_pos
 
     def check_display(self):
-        display = methods.display()
-        if display != None:
+        result = methods.display()
+        if result is not None:
             self.errors['display'] = 'ok'
         else:
             self.errors['display'] = 'error'
 
     def check_easire(self):
-        display = methods.easire()
-        if display != None:
+        result = methods.easire()
+        if result is not None:
             self.errors['easire'] = 'ok'
         else:
             self.errors['easire'] = 'error'
 
     def call_methods(self):
-        self.client.publish(
-            f'probe/{self.fqdn}/capabilities', self.capabilities)
+        self.client.publish(f'probe/{self.fqdn}/capabilities', self.capabilities)
         for name, method in self.methods.items():
             try:
                 if name == 'mpv_file_pos_sec':
@@ -81,11 +78,9 @@ class Probe(Thread):
                 elif name == 'easire':
                     self.check_easire()
                 else:
-                    self.client.publish(
-                        f'probe/{self.fqdn}/{name}', call_method(method))
-                self.client.publish(
-                    f'probe/{self.fqdn}/errors', error_response(self.errors))
-            except:
+                    self.client.publish(f'probe/{self.fqdn}/{name}', call_method(method))
+                self.client.publish(f'probe/{self.fqdn}/errors', error_response(self.errors))
+            except Exception:
                 logger.exception(name)
 
     def run(self):
@@ -102,10 +97,8 @@ class Probe(Thread):
         logger.info('Connected %s', args)
         self.is_connected = True
         client.publish(f'probe/{self.fqdn}/connected')
-        self.client.publish(
-            f'probe/{self.fqdn}/capabilities', self.capabilities)
-        self.client.publish(
-            f'probe/{self.fqdn}/boot_time', call_method(methods.boot_time))
+        self.client.publish(f'probe/{self.fqdn}/capabilities', self.capabilities)
+        self.client.publish(f'probe/{self.fqdn}/boot_time', call_method(methods.boot_time))
         client.subscribe(
             f'manager/{self.fqdn}/#',
             options=SubscribeOptions(noLocal=True)
@@ -118,6 +111,10 @@ class Probe(Thread):
     def on_message(self, client: Client, userdata, msg: MQTTMessage):
         method_name = msg.topic.split('/')[2]
         logger.info('Received method %s', method_name)
+        if method_name not in self._allowed_methods:
+            response = make_response(error=dict(message='Method not allowed'))
+            client.publish(f'probe/{self.fqdn}/{method_name}', response)
+            return
         method: Union[Callable, None] = getattr(methods, method_name, None)
         response = make_response(data=dict(status='received'))
         client.publish(f'probe/{self.fqdn}/{method_name}', response)

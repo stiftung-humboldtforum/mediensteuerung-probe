@@ -4,7 +4,10 @@ import logging
 
 import click
 import paho.mqtt.client as mqtt
-import sd_notify
+try:
+    import sd_notify
+except ImportError:
+    sd_notify = None
 
 
 from probe import Probe
@@ -19,6 +22,7 @@ class App:
                  ca_certificate,
                  certfile,
                  keyfile,
+                 no_tls,
                  notify):
         self.mqtt_hostname = mqtt_hostname
         self.mqtt_port = mqtt_port
@@ -26,8 +30,9 @@ class App:
         self.ca_certificate = ca_certificate
         self.certfile = certfile
         self.keyfile = keyfile
+        self.no_tls = no_tls
         self.notify = notify
-        self.notify_enabled = notify.enabled()
+        self.notify_enabled = notify.enabled() if notify is not None else False
         self._fqdn = socket.getfqdn()
 
     @property
@@ -39,31 +44,32 @@ class App:
             raise Exception('FQDN change detected. Retrying.')
         return fqdn
 
+    def _setup(self):
+        logger.info('FQDN: %s', self.fqdn)
+        self.mqtt_client = mqtt.Client(client_id=self.fqdn)
+        self.mqtt_client.enable_logger(logger)
+
+        if not self.no_tls:
+            logger.info('MQTT TLS: %s %s %s', self.ca_certificate, self.certfile, self.keyfile)
+            self.mqtt_client.tls_set(
+                self.ca_certificate,
+                self.certfile,
+                self.keyfile
+            )
+
+        self.probe = Probe(self.fqdn,
+                           client=self.mqtt_client,
+                           config=self.config)
+
     def run(self):
-        _setting_up = True
-        while _setting_up:
+        while True:
             try:
-                logger.info('FQDN: %s', self.fqdn)
-                self.mqtt_client = mqtt.Client(client_id=self.fqdn)
-                self.mqtt_client.enable_logger(logger)
-
-                logger.info('MQTT TLS: %s %s %s', self.ca_certificate, self.certfile, self.keyfile)
-                self.mqtt_client.tls_set(
-                    self.ca_certificate,
-                    self.certfile,
-                    self.keyfile
-                )
-
-                self.probe = Probe(self.fqdn,
-                                   client=self.mqtt_client,
-                                   config=self.config,
-                                   logger=logger)
-                _setting_up = False
+                self._setup()
             except Exception as e:
                 logger.exception(e)
                 time.sleep(5)
+                continue
 
-        while True:
             try:
                 self.probe.start()
 
@@ -77,8 +83,6 @@ class App:
                 if self.notify_enabled:
                     self.notify.ready()
                     self.notify.status('Connected.')
-
-                if self.notify_enabled:
                     self.notify.notify()
                 time.sleep(3)
 
@@ -89,21 +93,19 @@ class App:
                         self.notify.notify()
 
                 logger.debug('Probe is not connected')
-                self.stop()
             except Exception as e:
                 logger.exception(e)
                 if self.notify_enabled:
                     self.notify.status('Failed.')
                     self.notify.notify()
-                self.stop()
-                self.run()
+
+            self.stop()
             time.sleep(5)
 
-
     def stop(self):
-        if self.mqtt_client.is_connected():
+        if hasattr(self, 'mqtt_client') and self.mqtt_client.is_connected():
             self.mqtt_client.disconnect()
-        if self.probe._running:
+        if hasattr(self, 'probe') and self.probe.is_alive():
             self.probe.stop()
             self.probe.join()
 
@@ -111,10 +113,11 @@ class App:
 @click.command()
 @click.option('--config_file', type=str, required=True)
 @click.option('--mqtt_hostname', type=str, required=True)
-@click.option('--mqtt_port', type=int, default=8883)
-@click.option('--ca_certificate', type=str, required=True)
-@click.option('--certfile', type=str, required=True)
-@click.option('--keyfile', type=str, required=True)
+@click.option('--mqtt_port', type=int, default=None)
+@click.option('--ca_certificate', type=str, required=False)
+@click.option('--certfile', type=str, required=False)
+@click.option('--keyfile', type=str, required=False)
+@click.option('--no_tls', is_flag=True, default=False)
 @click.option('--loglevel', type=click.Choice(['CRITICAL', 'ERROR', 'WARNING', 'INFO', 'DEBUG'], case_sensitive=False), default='CRITICAL')
 def main(
         config_file,
@@ -123,15 +126,24 @@ def main(
         ca_certificate,
         certfile,
         keyfile,
+        no_tls,
         loglevel):
 
     logging.basicConfig(level=getattr(logging, loglevel, 'WARNING'),
                         format='%(filename)s[line:%(lineno)d] %(levelname)s %(message)s')
 
-    notify = sd_notify.Notifier()
-    notify_enabled = notify.enabled()
+    if not no_tls and not all([ca_certificate, certfile, keyfile]):
+        raise click.UsageError('--ca_certificate, --certfile, and --keyfile are required unless --no_tls is set.')
 
-    if notify_enabled:
+    if mqtt_port is None:
+        mqtt_port = 1883 if no_tls else 8883
+
+    if sd_notify is not None:
+        notify = sd_notify.Notifier()
+    else:
+        notify = None
+
+    if notify is not None and notify.enabled():
         notify.status('Startup...')
 
     config = get_config(config_file)
@@ -143,6 +155,7 @@ def main(
               ca_certificate,
               certfile,
               keyfile,
+              no_tls,
               notify)
     app.run()
 

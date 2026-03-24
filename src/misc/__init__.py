@@ -24,9 +24,9 @@ def parse_payload(payload: bytes) -> Tuple[list, dict]:
     try:
         arguments = json.loads(payload)
         if 'args' in arguments:
-            args = arguments.args
+            args = arguments['args']
         if 'kwargs' in arguments:
-            kwargs = arguments.kwargs
+            kwargs = arguments['kwargs']
     except json.JSONDecodeError:
         pass
     return args, kwargs

@@ -1,9 +1,11 @@
 import os
 import platform
 import subprocess
+import sys
+if platform.system() == 'Windows':
+    sys.coinit_flags = 0  # COINIT_MULTITHREADED — match pythonnet/LHM
 from .sensors import temperatures, fans, boot_time, uptime, mpv_file_pos_sec, display, easire
-from misc import logger, parse_payload, make_response
-
+from misc import logger, make_response
 
 def call_method(method, *args, **kwargs):
     try:
@@ -20,77 +22,57 @@ def call_method(method, *args, **kwargs):
         )
     return response
 
-
 def shutdown():
-    result = os.system('shutdown now')
+    if platform.system() == 'Linux':
+        result = os.system('sudo shutdown now')
+    elif platform.system() == 'Windows':
+        result = os.system('shutdown /s /t 0')
+    else:
+        raise NotImplementedError(f'shutdown not supported on {platform.system()}')
     if result != 0:
         raise Exception(result)
-
 
 def reboot():
-    result = os.system('reboot now')
+    if platform.system() == 'Linux':
+        result = os.system('sudo reboot now')
+    elif platform.system() == 'Windows':
+        result = os.system('shutdown /r /t 0')
+    else:
+        raise NotImplementedError(f'reboot not supported on {platform.system()}')
     if result != 0:
         raise Exception(result)
-
 
 def ping():
     return
 
-
-def get_audio_device():
-    try:
-        from alsaaudio import pcms
-        pcms = pcms()
-        if 'pipewire' in pcms or 'pulseaudio' in pcms:
-            return 'pipewire' if 'pipewire' in pcms else 'pulseaudio'
-        else:
-            return False
-    except:
-        False
-
+def _get_windows_volume():
+    from pycaw.pycaw import AudioUtilities
+    speakers = AudioUtilities.GetSpeakers()
+    return speakers.EndpointVolume
 
 def is_muted():
     if platform.system() == 'Linux':
-        device = get_audio_device()
-        if device:
-            from alsaaudio import Mixer
-            mixer = Mixer(device=device)
-            return mixer.getmute()[0]
-        else:
-            p = subprocess.run(
-                'mpv_control get_mute', stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=True)
-            if p.returncode == 0:
-                return int(p.stdout.strip().decode())
+        return "MUTED" in subprocess.check_output(["wpctl", "get-volume", "@DEFAULT_AUDIO_SINK@"]).decode()
+    elif platform.system() == 'Windows':
+        volume = _get_windows_volume()
+        return bool(volume.GetMute())
     else:
-        result = subprocess.run(
-            ['sc', 'query', 'audiosrv'], capture_output=True, text=True)
-        return 'RUNNING' not in result.stdout
-
+        raise NotImplementedError(f'is_muted not supported on {platform.system()}')
 
 def mute():
     if platform.system() == 'Linux':
-        device = get_audio_device()
-        if device:
-            from alsaaudio import Mixer
-            mixer = Mixer(device=device)
-            mixer.setmute(True, 0)
-        else:
-            subprocess.run('mpv_control set_mute 1',
-                           stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=True)
-
+        subprocess.run(["wpctl", "set-mute", "@DEFAULT_AUDIO_SINK@", "1"])
+    elif platform.system() == 'Windows':
+        volume = _get_windows_volume()
+        volume.SetMute(1, None)
     else:
-        subprocess.run('net stop audiosrv')
-
+        raise NotImplementedError(f'mute not supported on {platform.system()}')
 
 def unmute():
     if platform.system() == 'Linux':
-        device = get_audio_device()
-        if device:
-            from alsaaudio import Mixer
-            mixer = Mixer(device=device)
-            mixer.setmute(False, 0)
-        else:
-            subprocess.run('mpv_control set_mute 0',
-                           stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=True)
+        subprocess.run(["wpctl", "set-mute", "@DEFAULT_AUDIO_SINK@", "0"])
+    elif platform.system() == 'Windows':
+        volume = _get_windows_volume()
+        volume.SetMute(0, None)
     else:
-        subprocess.run('net start audiosrv')
+        raise NotImplementedError(f'unmute not supported on {platform.system()}')

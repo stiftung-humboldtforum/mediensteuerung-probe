@@ -15,6 +15,8 @@ downloads/
 eggs/
 .eggs/
 lib/
+!lib/win32/
+!lib/win32/**
 lib64/
 parts/
 sdist/
@@ -118,6 +120,9 @@ celerybeat.pid
 
 # SageMath parsed files
 *.sage.py
+
+# Config
+userconfig.txt
 
 # Environments
 .env
