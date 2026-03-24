@@ -73,15 +73,15 @@ class App:
                 logger.info('Connecting MQTT Host: %s:%s', self.mqtt_hostname, self.mqtt_port)
                 self.mqtt_client.connect(self.mqtt_hostname, self.mqtt_port, 60)
                 self.mqtt_client.loop_start()
-                
+
                 if self.notify_enabled:
                     self.notify.ready()
                     self.notify.status('Connected.')
-                
+
                 if self.notify_enabled:
                     self.notify.notify()
                 time.sleep(3)
-                
+
                 while self.probe.is_connected:
                     logger.info('FQDN: %s', self.fqdn)
                     time.sleep(5)
