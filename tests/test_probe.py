@@ -225,3 +225,16 @@ def test_periodic_methods_excludes_commands():
     assert 'mute' not in probe.methods
     assert 'ping' in probe.methods
     assert 'temperatures' in probe.methods
+
+
+def test_call_methods_late_binds_via_methods_module():
+    """Patches applied AFTER probe init must still take effect."""
+    probe = _make_probe(methods='temperatures')
+    probe.is_connected = True
+    with patch('methods.temperatures', return_value={'patched': [{'current': 99}]}):
+        probe.call_methods()
+    # Find the temperatures publish (errors-publish ist letzter Aufruf)
+    calls = [c for c in probe.client.publish.call_args_list if c[0][0].endswith('/temperatures')]
+    assert len(calls) == 1
+    payload = json.loads(calls[0][0][1])
+    assert payload['data']['result'] == {'patched': [{'current': 99}]}

@@ -116,7 +116,7 @@ class Probe(Thread):
         # capabilities werden in on_connect() retained publisht — kein
         # Bedarf, sie alle 5s erneut zu schicken (waere QoS 0 ohne retain
         # und reiner Traffic-Muell).
-        for name, method in self.methods.items():
+        for name, stored_method in self.methods.items():
             try:
                 if name == 'mpv_file_pos_sec':
                     self.check_playback_pos()
@@ -125,6 +125,10 @@ class Probe(Thread):
                 elif name == 'easire':
                     self.check_easire()
                 else:
+                    # Late-bind via methods-Modul, damit Test-Patches
+                    # (patch('methods.<name>')) auch in der periodischen
+                    # Schleife greifen. stored_method ist Fallback.
+                    method = getattr(methods, name, stored_method)
                     self.client.publish(f'probe/{self.fqdn}/{name}', call_method(method))
             except Exception:
                 logger.exception(name)
