@@ -23,6 +23,12 @@ from probe import Probe
 from misc import get_config, logger
 
 
+class FqdnChanged(RuntimeError):
+    """Raised when socket.getfqdn() returns a different value than at
+    init. The run-Loop catches it and rebuilds the MQTT client with
+    the new identity."""
+
+
 class App:
     def __init__(self,
                  config,
@@ -46,14 +52,26 @@ class App:
 
     @property
     def fqdn(self):
-        fqdn = socket.getfqdn()
-        if fqdn != self._fqdn:
-            self.stop()
-            self._fqdn = fqdn
-            raise Exception('FQDN change detected. Retrying.')
-        return fqdn
+        """Cached FQDN. Use _refresh_fqdn() to re-resolve."""
+        return self._fqdn
+
+    def _refresh_fqdn(self):
+        """Re-resolve FQDN via DNS. Raises FqdnChanged if it changed —
+        the run-Loop fängt das, baut einen neuen Client (mit der neuen
+        Identity) und reconnected.
+
+        Side-effect-frei (kein stop, kein logger.exception). Wird nur
+        in _setup() aufgerufen, nicht in der inner-while-Loop —
+        DNS-Lookup pro 5s-Cycle war Verschwendung.
+        """
+        current = socket.getfqdn()
+        if current != self._fqdn:
+            old = self._fqdn
+            self._fqdn = current
+            raise FqdnChanged(f'FQDN changed: {old} → {current}')
 
     def _setup(self):
+        self._refresh_fqdn()
         logger.info('FQDN: %s', self.fqdn)
         self.mqtt_client = mqtt.Client(
             callback_api_version=mqtt.CallbackAPIVersion.VERSION2,
@@ -127,7 +145,6 @@ class App:
                 last_heartbeat = self.probe.heartbeat
                 stalled_cycles = 0
                 while self.probe.is_connected:
-                    logger.info('FQDN: %s', self.fqdn)
                     time.sleep(5)
                     current_heartbeat = self.probe.heartbeat
                     if current_heartbeat != last_heartbeat:
