@@ -83,13 +83,19 @@ class App:
                            client=self.mqtt_client,
                            config=self.config)
 
+    BACKOFF_INITIAL = 5
+    BACKOFF_MAX = 60
+
     def run(self):
+        backoff = self.BACKOFF_INITIAL
         while True:
             try:
                 self._setup()
             except Exception as e:
                 logger.exception(e)
-                time.sleep(5)
+                logger.warning('Setup failed, retrying in %ds', backoff)
+                time.sleep(backoff)
+                backoff = min(backoff * 2, self.BACKOFF_MAX)
                 continue
 
             try:
@@ -109,6 +115,9 @@ class App:
                 if not self.probe.connected_event.wait(timeout=15):
                     logger.error('MQTT connect handshake timed out after 15s')
                     raise TimeoutError('MQTT connect timeout')
+
+                # Erfolgreicher Handshake → backoff-Counter zuruecksetzen
+                backoff = self.BACKOFF_INITIAL
 
                 if self.notify_enabled:
                     self.notify.ready()
@@ -144,7 +153,9 @@ class App:
                     self.notify.notify()
 
             self.stop()
-            time.sleep(5)
+            logger.info('Reconnect in %ds', backoff)
+            time.sleep(backoff)
+            backoff = min(backoff * 2, self.BACKOFF_MAX)
 
     def stop(self):
         if hasattr(self, 'mqtt_client') and self.mqtt_client.is_connected():
