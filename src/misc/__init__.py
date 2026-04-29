@@ -6,7 +6,7 @@ import logging
 logger = logging.getLogger()
 
 
-def get_config(config_file):
+def get_config(config_file: str) -> dict:
     """Parse a userconfig.txt with shell-style KEY="value" lines into
     a dict. Errors (file missing, parse error) yield an empty dict —
     Probe.__init__ falls back to defaults / fail-closed values."""
@@ -62,7 +62,7 @@ def make_response(
     return json.dumps(response)
 
 
-def status_response(status):
+def status_response(status: dict) -> str:
     """Wrap a status dict (e.g. {'display': 'ok', 'easire': 'error'})
     in the standard probe-response envelope. Despite the per-key 'error'
     values it carries, the envelope is data-keyed (not error-keyed) —

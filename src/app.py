@@ -10,6 +10,7 @@ if platform.system() == 'Windows':
 import time
 import socket
 import logging
+from typing import Optional
 
 import click
 import paho.mqtt.client as mqtt
@@ -35,15 +36,17 @@ class App:
     or any failure: stop, exponential-backoff, retry.
     """
 
-    def __init__(self,
-                 config,
-                 mqtt_hostname,
-                 mqtt_port,
-                 ca_certificate,
-                 certfile,
-                 keyfile,
-                 no_tls,
-                 notify):
+    def __init__(
+        self,
+        config: dict,
+        mqtt_hostname: str,
+        mqtt_port: int,
+        ca_certificate: Optional[str],
+        certfile: Optional[str],
+        keyfile: Optional[str],
+        no_tls: bool,
+        notify,  # sd_notify.Notifier | None
+    ) -> None:
         self.mqtt_hostname = mqtt_hostname
         self.mqtt_port = mqtt_port
         self.config = config
@@ -56,11 +59,11 @@ class App:
         self._fqdn = socket.getfqdn()
 
     @property
-    def fqdn(self):
+    def fqdn(self) -> str:
         """Cached FQDN. Use _refresh_fqdn() to re-resolve."""
         return self._fqdn
 
-    def _refresh_fqdn(self):
+    def _refresh_fqdn(self) -> None:
         """Re-resolve FQDN via DNS. Raises FqdnChanged if it changed —
         the run-Loop fängt das, baut einen neuen Client (mit der neuen
         Identity) und reconnected.
@@ -75,7 +78,7 @@ class App:
             self._fqdn = current
             raise FqdnChanged(f'FQDN changed: {old} → {current}')
 
-    def _setup(self):
+    def _setup(self) -> None:
         """Build a fresh mqtt.Client + Probe pair. Runs once per
         reconnect cycle. May raise FqdnChanged or any TLS / config-
         related exception — caller (run) catches and retries with
@@ -113,7 +116,7 @@ class App:
     BACKOFF_INITIAL = 5
     BACKOFF_MAX = 60
 
-    def run(self):
+    def run(self) -> None:
         """Main lifecycle loop. Exits only via SIGTERM/SIGKILL — the
         outer service manager (systemd / NSSM) is responsible for
         eventual stops."""
@@ -186,7 +189,7 @@ class App:
             time.sleep(backoff)
             backoff = min(backoff * 2, self.BACKOFF_MAX)
 
-    def stop(self):
+    def stop(self) -> None:
         """Tear down current cycle: disconnect MQTT, signal Probe-
         Thread to stop, join it. Idempotent — safe to call when
         attributes don't yet exist (early Setup-failure)."""

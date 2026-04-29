@@ -5,6 +5,7 @@ import os
 import subprocess
 import sys
 import time
+from typing import Optional
 
 import psutil
 
@@ -18,24 +19,24 @@ def _get_windows_volume():
     return speakers.EndpointVolume
 
 
-def is_muted():
+def is_muted() -> bool:
     """Whether the default audio endpoint is muted (via pycaw COM)."""
     return bool(_get_windows_volume().GetMute())
 
 
-def mute():
+def mute() -> None:
     """Mute the default audio endpoint."""
     _get_windows_volume().SetMute(1, None)
 
 
-def unmute():
+def unmute() -> None:
     """Unmute the default audio endpoint."""
     _get_windows_volume().SetMute(0, None)
 
 
 # --- Power ----------------------------------------------------------------
 
-def shutdown():
+def shutdown() -> None:
     """Trigger immediate poweroff via 'shutdown /s /t 0' (Windows
     built-in)."""
     cmd = ['shutdown', '/s', '/t', '0']
@@ -44,7 +45,7 @@ def shutdown():
         raise RuntimeError(f'shutdown failed (rc={result.returncode}): {result.stderr.strip()}')
 
 
-def reboot():
+def reboot() -> None:
     """Trigger immediate reboot via 'shutdown /r /t 0'."""
     cmd = ['shutdown', '/r', '/t', '0']
     result = subprocess.run(cmd, capture_output=True, text=True)
@@ -113,24 +114,24 @@ def _get_lhm_sensors(sensor_type):
     return results
 
 
-def temperatures():
+def temperatures() -> dict[str, list[dict]]:
     """CPU/GPU temperatures via LibreHardwareMonitor."""
     return _get_lhm_sensors('Temperature')
 
 
-def fans():
+def fans() -> dict[str, list[dict]]:
     """CPU/GPU fan speeds via LibreHardwareMonitor."""
     return _get_lhm_sensors('Fan')
 
 
 # --- Misc -----------------------------------------------------------------
 
-def uptime():
+def uptime() -> float:
     """Seconds since boot via psutil."""
     return time.time() - psutil.boot_time()
 
 
-def display():
+def display() -> Optional[str]:
     """Active display mode as 'WIDTHxHEIGHT, RATE Hz' via the Win32
     EnumDisplaySettingsW API."""
     class DEVMODE(ctypes.Structure):

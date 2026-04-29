@@ -71,7 +71,7 @@ class Probe(Thread):
             logger.warning('Ignoring unknown PROBE_METHODS: %s', ','.join(unknown))
         self.errors = {}
 
-    def check_playback_pos(self):
+    def check_playback_pos(self) -> None:
         """Probe whether mpv playback advances. If the position is
         identical to the previous cycle, mpv is considered stuck —
         errors['playback'] = 'error'."""
@@ -95,7 +95,7 @@ class Probe(Thread):
             make_response(data=dict(status='complete', result=new_playback_pos)),
         )
 
-    def check_display(self):
+    def check_display(self) -> None:
         """Probe display resolution+refresh. Returns None on errors
         (no DISPLAY, xrandr fails, no active mode line)."""
         try:
@@ -117,7 +117,7 @@ class Probe(Thread):
             make_response(data=dict(status='complete', result=result)),
         )
 
-    def check_easire(self):
+    def check_easire(self) -> None:
         """Probe whether the easire-player process is alive."""
         try:
             result = methods.easire()
@@ -138,7 +138,7 @@ class Probe(Thread):
             make_response(data=dict(status='complete', result=result)),
         )
 
-    def call_methods(self):
+    def call_methods(self) -> None:
         """Run one polling cycle: invoke every sensor in self.methods
         and publish results. errors-dict is published once at the end.
         Per-method exceptions are logged but don't break the cycle."""
@@ -163,7 +163,7 @@ class Probe(Thread):
                 logger.exception(name)
         self.client.publish(f'probe/{self.fqdn}/errors', status_response(self.errors))
 
-    def run(self):
+    def run(self) -> None:
         """Thread main-loop. Runs call_methods every 5s while connected;
         sleeps via Event.wait so stop() returns instantly."""
         while not self._stop_event.is_set():
@@ -174,7 +174,7 @@ class Probe(Thread):
             # bis zu 5s zu warten.
             self._stop_event.wait(5)
 
-    def stop(self):
+    def stop(self) -> None:
         """Signal the run-loop to terminate. The thread wakes from
         wait(5) immediately. Caller should join() afterwards."""
         self._stop_event.set()

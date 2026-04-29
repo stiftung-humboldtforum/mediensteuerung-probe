@@ -12,6 +12,7 @@ COMMANDS — names allowed in PROBE_CAPABILITIES (manager → probe RPC).
 """
 import platform
 import subprocess
+from typing import Callable, Optional
 
 import psutil
 
@@ -29,7 +30,7 @@ else:
 
 # --- Common helpers --------------------------------------------------------
 
-def call_method(method, *args, **kwargs):
+def call_method(method: Callable, *args, **kwargs) -> str:
     """Wrap a function call in the standard probe-response envelope.
     On success returns {"data": {"status": "complete", "result": <value>}};
     on exception returns {"error": {"message": <ExceptionName>, "errors": <args>}}."""
@@ -43,18 +44,18 @@ def call_method(method, *args, **kwargs):
 
 # --- Common sensors --------------------------------------------------------
 
-def ping():
+def ping() -> None:
     """No-op heartbeat marker. Published periodically so the manager
     sees the probe is alive; carries no data."""
     return None
 
 
-def boot_time():
+def boot_time() -> float:
     """Unix-epoch seconds at which the system booted."""
     return psutil.boot_time()
 
 
-def mpv_file_pos_sec():
+def mpv_file_pos_sec() -> Optional[int]:
     """Current playback position of the kiosk mpv player in seconds.
     Requires the external 'mpv_control' helper script on PATH (see
     README). Returns None if mpv_control fails (mpv not running)."""
@@ -69,7 +70,7 @@ def mpv_file_pos_sec():
     return None
 
 
-def easire():
+def easire() -> Optional[bool]:
     """Whether an 'easire-player' process is running (matched on
     process name OR any cmdline argument). Returns True or None
     (not False — None signals 'not present', preserving Original-
