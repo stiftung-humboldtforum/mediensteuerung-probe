@@ -35,6 +35,34 @@ def test_parse_payload_invalid_json():
     assert kwargs == {}
 
 
+def test_parse_payload_args_not_list():
+    payload = json.dumps({'args': 'evil', 'kwargs': {}}).encode()
+    args, kwargs = parse_payload(payload)
+    assert args == []
+    assert kwargs == {}
+
+
+def test_parse_payload_kwargs_not_dict():
+    payload = json.dumps({'args': [], 'kwargs': 'evil'}).encode()
+    args, kwargs = parse_payload(payload)
+    assert args == []
+    assert kwargs == {}
+
+
+def test_parse_payload_kwargs_non_string_keys():
+    payload = b'{"args": [], "kwargs": {"1": "x"}}'
+    args, kwargs = parse_payload(payload)
+    assert args == []
+    assert kwargs == {'1': 'x'}
+
+
+def test_parse_payload_top_level_array():
+    payload = json.dumps([1, 2, 3]).encode()
+    args, kwargs = parse_payload(payload)
+    assert args == []
+    assert kwargs == {}
+
+
 def test_make_response_data():
     result = json.loads(make_response(data={'status': 'ok'}))
     assert result['data']['status'] == 'ok'

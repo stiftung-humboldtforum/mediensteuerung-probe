@@ -19,16 +19,25 @@ def get_config(config_file):
 
 
 def parse_payload(payload: bytes) -> Tuple[list, dict]:
-    args = []
-    kwargs = {}
+    args: list = []
+    kwargs: dict = {}
     try:
         arguments = json.loads(payload)
-        if 'args' in arguments:
-            args = arguments['args']
-        if 'kwargs' in arguments:
-            kwargs = arguments['kwargs']
-    except json.JSONDecodeError:
-        pass
+    except (json.JSONDecodeError, TypeError, ValueError):
+        return args, kwargs
+    if not isinstance(arguments, dict):
+        logger.warning('Payload is not a JSON object: %r', type(arguments).__name__)
+        return args, kwargs
+    raw_args = arguments.get('args', [])
+    if isinstance(raw_args, list):
+        args = raw_args
+    else:
+        logger.warning('Payload args is not a list: %r', type(raw_args).__name__)
+    raw_kwargs = arguments.get('kwargs', {})
+    if isinstance(raw_kwargs, dict) and all(isinstance(k, str) for k in raw_kwargs):
+        kwargs = raw_kwargs
+    else:
+        logger.warning('Payload kwargs is not a string-keyed dict')
     return args, kwargs
 
 
