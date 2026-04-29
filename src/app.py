@@ -137,7 +137,7 @@ class App:
 @click.option('--certfile', type=str, required=False)
 @click.option('--keyfile', type=str, required=False)
 @click.option('--no_tls', is_flag=True, default=False)
-@click.option('--loglevel', type=click.Choice(['CRITICAL', 'ERROR', 'WARNING', 'INFO', 'DEBUG'], case_sensitive=False), default='CRITICAL')
+@click.option('--loglevel', type=click.Choice(['CRITICAL', 'ERROR', 'WARNING', 'INFO', 'DEBUG'], case_sensitive=False), default='INFO')
 def main(
         config_file,
         mqtt_hostname,
@@ -148,8 +148,11 @@ def main(
         no_tls,
         loglevel):
 
-    logging.basicConfig(level=getattr(logging, loglevel, 'WARNING'),
-                        format='%(filename)s[line:%(lineno)d] %(levelname)s %(message)s')
+    logging.basicConfig(
+        level=getattr(logging, loglevel.upper(), logging.WARNING),
+        format='%(asctime)s %(levelname)s %(filename)s:%(lineno)d %(message)s',
+        datefmt='%Y-%m-%dT%H:%M:%S%z',
+    )
 
     if not no_tls and not all([ca_certificate, certfile, keyfile]):
         raise click.UsageError('--ca_certificate, --certfile, and --keyfile are required unless --no_tls is set.')
