@@ -130,8 +130,20 @@ PROBE_CAPABILITIES="wake,shutdown,reboot,mute,unmute"
 | fans             | CPU/GPU fan speeds                  | psutil             | LibreHardwareMonitor       |
 | display          | Display resolution and refresh rate | xrandr             | Win32 API (ctypes)         |
 | is_muted         | Audio mute state                    | wpctl              | pycaw                      |
-| easire           | easire-player process running       | ps/grep            | psutil                     |
+| easire           | easire-player process running       | psutil             | psutil                     |
 | mpv_file_pos_sec | Playback position of mpv player     | mpv_control        | -                          |
+
+#### `mpv_control`
+
+`mpv_file_pos_sec` requires an external helper called `mpv_control` on
+`$PATH` that talks to mpv's IPC socket. It is **not** installed by
+this repo and not published as a pip package. If you don't run mpv as
+the kiosk player, you can omit `mpv_file_pos_sec` from `PROBE_METHODS`.
+
+A typical implementation is a small shell script around `socat` or
+`echo | nc -U /tmp/mpvsocket` that issues `{"command":["get_property","time-pos"]}`
+and prints the integer seconds. See e.g.
+<https://github.com/mpv-player/mpv/blob/master/DOCS/man/ipc.rst>.
 
 ### Available PROBE_CAPABILITIES
 
