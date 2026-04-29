@@ -115,6 +115,24 @@ pip install -r requirements-dev.txt
 pytest
 ```
 
+### Reproducible builds (`pip-compile`)
+
+`requirements.lock.txt` is the resolved transitive lock of
+`requirements.txt`, generated via `pip-compile` (from `pip-tools`).
+For deterministic deploys, prefer it over `requirements.txt`:
+
+```bash
+pip install -r requirements.lock.txt
+```
+
+To re-generate (run on the **target platform** so `sys_platform` markers
+resolve correctly — Linux for production probes):
+
+```bash
+pip install pip-tools
+pip-compile --strip-extras --output-file=requirements.lock.txt requirements.txt
+```
+
 ## Usage
 
 ```bash
