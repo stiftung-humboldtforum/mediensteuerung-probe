@@ -75,6 +75,13 @@ pip install -r requirements.txt
    ```
    Note: `paho-mqtt` must be version 1.6.1 (v2.x has breaking API changes).
 
+### Development / Tests
+
+```bash
+pip install -r requirements-dev.txt
+pytest
+```
+
 ## Usage
 
 ```bash
