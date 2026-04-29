@@ -53,6 +53,10 @@ class Probe(Thread):
         else:
             self.errors['playback'] = 'ok'
         self.playback_pos = new_playback_pos
+        self.client.publish(
+            f'probe/{self.fqdn}/mpv_file_pos_sec',
+            make_response(data=dict(status='complete', result=new_playback_pos)),
+        )
 
     def check_display(self):
         result = methods.display()
@@ -60,6 +64,10 @@ class Probe(Thread):
             self.errors['display'] = 'ok'
         else:
             self.errors['display'] = 'error'
+        self.client.publish(
+            f'probe/{self.fqdn}/display',
+            make_response(data=dict(status='complete', result=result)),
+        )
 
     def check_easire(self):
         result = methods.easire()
@@ -67,6 +75,10 @@ class Probe(Thread):
             self.errors['easire'] = 'ok'
         else:
             self.errors['easire'] = 'error'
+        self.client.publish(
+            f'probe/{self.fqdn}/easire',
+            make_response(data=dict(status='complete', result=result)),
+        )
 
     def call_methods(self):
         self.client.publish(f'probe/{self.fqdn}/capabilities', self.capabilities)

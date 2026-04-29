@@ -44,6 +44,9 @@ def test_check_display_ok(mock_display):
     probe = _make_probe()
     probe.check_display()
     assert probe.errors['display'] == 'ok'
+    topic, payload = probe.client.publish.call_args[0]
+    assert topic == 'probe/test.local/display'
+    assert json.loads(payload)['data']['result'] == '1920x1080, 60 Hz'
 
 
 @patch('methods.display', return_value=None)
