@@ -1,0 +1,52 @@
+LICENSE FOR mediensteuerung-probe
+=================================
+
+Copyright (c) Stiftung Humboldt Forum im Berliner Schloss
+
+>>> ACTION REQUIRED — replace this placeholder with the chosen license <<<
+
+This file is currently a placeholder. The repository is published on
+GitHub (github.com/stiftung-humboldtforum/mediensteuerung-probe) but
+no license has been formally chosen yet, which means under default
+copyright law nobody other than the rights holder may use, modify, or
+redistribute the source.
+
+Common options for utility / infrastructure code like this probe:
+
+  - MIT          — short, permissive; allows commercial use,
+                   modification, distribution; only requires
+                   preserving the copyright notice. Most common
+                   choice for small open-source utilities.
+                   https://opensource.org/licenses/MIT
+
+  - Apache-2.0   — permissive like MIT but additionally provides an
+                   explicit patent license. Recommended for projects
+                   that may include patentable algorithms (probably
+                   overkill here).
+                   https://opensource.org/licenses/Apache-2.0
+
+  - BSD-3-Clause — permissive, similar to MIT, with an additional
+                   non-endorsement clause.
+                   https://opensource.org/licenses/BSD-3-Clause
+
+  - AGPL-3.0     — strong copyleft; modifications must be released
+                   under the same license, including for network-
+                   delivered services. Suitable if the Stiftung wants
+                   to ensure improvements stay open.
+                   https://www.gnu.org/licenses/agpl-3.0.html
+
+  - "All rights reserved" / proprietary — no public license; remove
+                   the repo from public visibility on GitHub if this
+                   is the intent.
+
+To finalize:
+  1. Pick an option (legal counsel of the Stiftung should confirm).
+  2. Replace the contents of this file with the verbatim license text
+     (e.g. https://choosealicense.com/licenses/mit/).
+  3. Update pyproject.toml's missing `license` field accordingly.
+  4. Optionally add SPDX-License-Identifier headers to source files.
+
+Until then: third-party DLLs in lib/win32/ have their own licenses
+(MPL-2.0 for LibreHardwareMonitor, Apache-2.0 for HidSharp) — those
+are documented in lib/win32/LICENSE.txt and are unaffected by this
+placeholder.
