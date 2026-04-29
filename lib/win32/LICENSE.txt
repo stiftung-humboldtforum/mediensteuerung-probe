@@ -1,0 +1,38 @@
+Third-Party Libraries
+=====================
+
+This directory contains pre-compiled third-party DLLs that are bundled
+with the Humboldt-Probe Windows build. They are NOT licensed under the
+same terms as the rest of this repository.
+
+
+LibreHardwareMonitorLib.dll
+---------------------------
+
+Source:   https://github.com/LibreHardwareMonitor/LibreHardwareMonitor
+License:  Mozilla Public License 2.0 (MPL-2.0)
+          https://www.mozilla.org/en-US/MPL/2.0/
+
+Notable points (read the full license for the binding text):
+  - You are free to use, modify, and redistribute this DLL.
+  - Any modifications to the LibreHardwareMonitor source code must be
+    made available under the same MPL-2.0 license.
+  - Statically/dynamically linking against this DLL from a different
+    project (as we do here) does NOT require that project to adopt the
+    MPL-2.0 license.
+  - Distribution of the unmodified binary requires that recipients can
+    obtain the source code (the link above suffices).
+
+
+HidSharp.dll
+------------
+
+Source:   https://www.zer7.com/software/hidsharp
+          (also distributed via NuGet: https://www.nuget.org/packages/HidSharp)
+License:  Apache License 2.0
+          https://www.apache.org/licenses/LICENSE-2.0
+
+Notable points:
+  - You are free to use, modify, and redistribute this DLL.
+  - The Apache 2.0 license requires preservation of copyright notices
+    and a NOTICE file (if any) when redistributing.
