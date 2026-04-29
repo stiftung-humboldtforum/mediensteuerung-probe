@@ -1,4 +1,4 @@
-from typing import Union, Any, Tuple
+from typing import Any, Optional
 import shlex
 import json
 import logging
@@ -18,7 +18,7 @@ def get_config(config_file):
     return config
 
 
-def parse_payload(payload: bytes) -> Tuple[list, dict]:
+def parse_payload(payload: bytes) -> tuple[list, dict]:
     args: list = []
     kwargs: dict = {}
     try:
@@ -42,8 +42,9 @@ def parse_payload(payload: bytes) -> Tuple[list, dict]:
 
 
 def make_response(
-    data: Union[None,dict]=None,
-    error: Union[None,dict]=None) -> str:
+    data: Optional[dict] = None,
+    error: Optional[dict] = None,
+) -> str:
     response: dict[str, Any] = {}
     if data is not None:
         response['data'] = data
