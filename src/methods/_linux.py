@@ -6,6 +6,8 @@ import psutil
 
 
 def shutdown():
+    """Trigger immediate poweroff via 'sudo shutdown now'. The probe
+    user must have a NOPASSWD sudoers entry for /sbin/shutdown."""
     cmd = ['sudo', 'shutdown', 'now']
     result = subprocess.run(cmd, capture_output=True, text=True)
     if result.returncode != 0:
@@ -13,6 +15,8 @@ def shutdown():
 
 
 def reboot():
+    """Trigger immediate reboot via 'sudo reboot now'. Same NOPASSWD
+    requirement as shutdown()."""
     cmd = ['sudo', 'reboot', 'now']
     result = subprocess.run(cmd, capture_output=True, text=True)
     if result.returncode != 0:
@@ -20,33 +24,43 @@ def reboot():
 
 
 def is_muted():
+    """Whether the default PipeWire sink is muted."""
     return 'MUTED' in subprocess.check_output(['wpctl', 'get-volume', '@DEFAULT_AUDIO_SINK@'], timeout=3).decode()
 
 
 def mute():
+    """Mute the default PipeWire sink."""
     subprocess.run(['wpctl', 'set-mute', '@DEFAULT_AUDIO_SINK@', '1'], timeout=3)
 
 
 def unmute():
+    """Unmute the default PipeWire sink."""
     subprocess.run(['wpctl', 'set-mute', '@DEFAULT_AUDIO_SINK@', '0'], timeout=3)
 
 
 def temperatures():
+    """All hardware temperatures via psutil. Schema:
+    {hw_name: [{label, current, high, critical}, ...]}."""
     sensors = psutil.sensors_temperatures()
     return {key: [temp._asdict() for temp in sensor] for key, sensor in sensors.items()}
 
 
 def fans():
+    """All fan speeds via psutil. Schema:
+    {hw_name: [{label, current}, ...]}."""
     sensors = psutil.sensors_fans()
     return {key: [fan._asdict() for fan in sensor] for key, sensor in sensors.items()}
 
 
 def uptime():
+    """Seconds since boot, read from /proc/uptime (cheaper than psutil)."""
     with open('/proc/uptime', 'r') as f:
         return float(f.read().split(' ')[0])
 
 
 def display():
+    """Active display mode as 'WIDTHxHEIGHT, RATE Hz', via xrandr.
+    Returns None if xrandr fails or no active mode line is found."""
     p = subprocess.run(
         ['xrandr', '--current'],
         env={**os.environ, 'DISPLAY': ':0'},

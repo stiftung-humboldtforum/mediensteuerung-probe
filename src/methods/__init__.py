@@ -30,6 +30,9 @@ else:
 # --- Common helpers --------------------------------------------------------
 
 def call_method(method, *args, **kwargs):
+    """Wrap a function call in the standard probe-response envelope.
+    On success returns {"data": {"status": "complete", "result": <value>}};
+    on exception returns {"error": {"message": <ExceptionName>, "errors": <args>}}."""
     try:
         result = method(*args, **kwargs)
         response = make_response(data=dict(status='complete', result=result))
@@ -41,14 +44,20 @@ def call_method(method, *args, **kwargs):
 # --- Common sensors --------------------------------------------------------
 
 def ping():
+    """No-op heartbeat marker. Published periodically so the manager
+    sees the probe is alive; carries no data."""
     return None
 
 
 def boot_time():
+    """Unix-epoch seconds at which the system booted."""
     return psutil.boot_time()
 
 
 def mpv_file_pos_sec():
+    """Current playback position of the kiosk mpv player in seconds.
+    Requires the external 'mpv_control' helper script on PATH (see
+    README). Returns None if mpv_control fails (mpv not running)."""
     p = subprocess.run(
         ['mpv_control', 'file_pos_sec'],
         stdout=subprocess.PIPE,
@@ -61,6 +70,10 @@ def mpv_file_pos_sec():
 
 
 def easire():
+    """Whether an 'easire-player' process is running (matched on
+    process name OR any cmdline argument). Returns True or None
+    (not False — None signals 'not present', preserving Original-
+    avorus-probe semantics for the manager-side)."""
     for proc in psutil.process_iter(['name', 'cmdline']):
         try:
             if 'easire-player' in (proc.info['name'] or ''):

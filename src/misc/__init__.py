@@ -7,6 +7,9 @@ logger = logging.getLogger()
 
 
 def get_config(config_file):
+    """Parse a userconfig.txt with shell-style KEY="value" lines into
+    a dict. Errors (file missing, parse error) yield an empty dict —
+    Probe.__init__ falls back to defaults / fail-closed values."""
     config = {}
     try:
         with open(config_file) as f:
@@ -19,6 +22,10 @@ def get_config(config_file):
 
 
 def parse_payload(payload: bytes) -> tuple[list, dict]:
+    """Decode a manager-command MQTT-Payload into (args, kwargs).
+    Expected format: JSON object {"args": [...], "kwargs": {...}}.
+    Anything malformed (non-JSON, wrong types, non-string kwargs-keys)
+    yields safe empty defaults + a logged warning — never raises."""
     args: list = []
     kwargs: dict = {}
     try:
@@ -45,6 +52,8 @@ def make_response(
     data: Optional[dict] = None,
     error: Optional[dict] = None,
 ) -> str:
+    """Build the standard probe-response JSON envelope. Either or both
+    of data/error may be set (manager-side decides which key wins)."""
     response: dict[str, Any] = {}
     if data is not None:
         response['data'] = data

@@ -30,6 +30,11 @@ class FqdnChanged(RuntimeError):
 
 
 class App:
+    """Outer lifecycle: setup MQTT-Client + Probe-Thread, connect, then
+    sit in a watchdog-pinging loop while the Probe runs. On disconnect
+    or any failure: stop, exponential-backoff, retry.
+    """
+
     def __init__(self,
                  config,
                  mqtt_hostname,
@@ -71,6 +76,10 @@ class App:
             raise FqdnChanged(f'FQDN changed: {old} → {current}')
 
     def _setup(self):
+        """Build a fresh mqtt.Client + Probe pair. Runs once per
+        reconnect cycle. May raise FqdnChanged or any TLS / config-
+        related exception — caller (run) catches and retries with
+        backoff."""
         self._refresh_fqdn()
         logger.info('FQDN: %s', self.fqdn)
         self.mqtt_client = mqtt.Client(
@@ -105,6 +114,9 @@ class App:
     BACKOFF_MAX = 60
 
     def run(self):
+        """Main lifecycle loop. Exits only via SIGTERM/SIGKILL — the
+        outer service manager (systemd / NSSM) is responsible for
+        eventual stops."""
         backoff = self.BACKOFF_INITIAL
         while True:
             try:
@@ -175,6 +187,9 @@ class App:
             backoff = min(backoff * 2, self.BACKOFF_MAX)
 
     def stop(self):
+        """Tear down current cycle: disconnect MQTT, signal Probe-
+        Thread to stop, join it. Idempotent — safe to call when
+        attributes don't yet exist (early Setup-failure)."""
         if hasattr(self, 'mqtt_client') and self.mqtt_client.is_connected():
             self.mqtt_client.disconnect()
         if hasattr(self, 'probe') and self.probe.is_alive():

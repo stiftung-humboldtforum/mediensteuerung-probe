@@ -9,6 +9,19 @@ from methods import call_method, SENSORS, COMMANDS
 
 
 class Probe(Thread):
+    """Periodic sensor poller + manager-command handler.
+
+    Runs in its own daemon thread. Each cycle (5s):
+        - polls sensors named in PROBE_METHODS via SENSORS-Whitelist,
+          publishes results on probe/<fqdn>/<sensor>
+        - aggregates ok/error per check_* sensor into errors-dict,
+          publishes once on probe/<fqdn>/errors
+        - bumps self.heartbeat (App.run uses it as watchdog signal)
+
+    MQTT callbacks (on_connect/on_disconnect/on_message) are wired in
+    __init__; the actual mqtt-loop runs in paho-mqtt's own thread.
+    """
+
     def __init__(self,
                  fqdn: str,
                  client: Client,
@@ -59,6 +72,9 @@ class Probe(Thread):
         self.errors = {}
 
     def check_playback_pos(self):
+        """Probe whether mpv playback advances. If the position is
+        identical to the previous cycle, mpv is considered stuck —
+        errors['playback'] = 'error'."""
         try:
             new_playback_pos = methods.mpv_file_pos_sec()
         except Exception:
@@ -80,6 +96,8 @@ class Probe(Thread):
         )
 
     def check_display(self):
+        """Probe display resolution+refresh. Returns None on errors
+        (no DISPLAY, xrandr fails, no active mode line)."""
         try:
             result = methods.display()
         except Exception:
@@ -100,6 +118,7 @@ class Probe(Thread):
         )
 
     def check_easire(self):
+        """Probe whether the easire-player process is alive."""
         try:
             result = methods.easire()
         except Exception:
@@ -120,6 +139,9 @@ class Probe(Thread):
         )
 
     def call_methods(self):
+        """Run one polling cycle: invoke every sensor in self.methods
+        and publish results. errors-dict is published once at the end.
+        Per-method exceptions are logged but don't break the cycle."""
         # capabilities werden in on_connect() retained publisht — kein
         # Bedarf, sie alle 5s erneut zu schicken (waere QoS 0 ohne retain
         # und reiner Traffic-Muell).
@@ -142,6 +164,8 @@ class Probe(Thread):
         self.client.publish(f'probe/{self.fqdn}/errors', status_response(self.errors))
 
     def run(self):
+        """Thread main-loop. Runs call_methods every 5s while connected;
+        sleeps via Event.wait so stop() returns instantly."""
         while not self._stop_event.is_set():
             if self.is_connected:
                 self.call_methods()
@@ -151,9 +175,14 @@ class Probe(Thread):
             self._stop_event.wait(5)
 
     def stop(self):
+        """Signal the run-loop to terminate. The thread wakes from
+        wait(5) immediately. Caller should join() afterwards."""
         self._stop_event.set()
 
     def on_connect(self, client: Client, userdata, flags, reason_code, properties=None):
+        """paho-mqtt v2 on_connect callback. Publishes initial state
+        (connected=1, capabilities, boot_time — all retained), subscribes
+        to manager-topics, sets connected_event for App.run."""
         logger.info('Connected reason_code=%s flags=%s', reason_code, flags)
         self.is_connected = True
         # retain=True so newly subscribing managers see "alive" without
@@ -172,11 +201,20 @@ class Probe(Thread):
         self.connected_event.set()
 
     def on_disconnect(self, client, userdata, disconnect_flags=None, reason_code=None, properties=None):
+        """paho-mqtt v2 on_disconnect callback. Clears the connected
+        flags so App.run notices and goes into reconnect-Backoff."""
         logger.info('Disconnected reason_code=%s', reason_code)
         self.is_connected = False
         self.connected_event.clear()
 
     def on_message(self, client: Client, userdata, msg: MQTTMessage):
+        """Manager-command dispatcher. Topic format:
+        manager/<fqdn>/<command>. Two gates apply:
+            1. command must be in self._allowed_methods
+               (PROBE_CAPABILITIES whitelist)
+            2. command must resolve to a function via the COMMANDS dict
+               — prevents reflection on imported module attributes
+        """
         parts = msg.topic.split('/')
         if len(parts) < 3 or not parts[2]:
             logger.warning('Ignoring malformed topic: %s', msg.topic)
