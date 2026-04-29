@@ -268,6 +268,62 @@ def test_periodic_methods_excludes_commands():
     assert 'temperatures' in probe.methods
 
 
+# --- Threading lifecycle (Probe.start/stop integration) ----------------
+
+def test_probe_thread_starts_and_stops_quickly():
+    """stop() must wake the run-loop out of its 5s wait immediately."""
+    import time as _time
+    probe = _make_probe()
+    probe.start()
+    try:
+        # Thread läuft (im wait, weil is_connected False)
+        assert probe.is_alive()
+    finally:
+        t0 = _time.monotonic()
+        probe.stop()
+        probe.join(timeout=2)
+        elapsed = _time.monotonic() - t0
+    assert not probe.is_alive(), 'thread did not terminate within 2s'
+    assert elapsed < 1.0, f'stop took {elapsed:.2f}s — Event-wait should be near-instant'
+
+
+def test_probe_thread_bumps_heartbeat_when_connected():
+    """Probe.run() should call call_methods() and bump heartbeat at
+    least once when is_connected is True."""
+    import time as _time
+    probe = _make_probe(methods='ping')
+    probe.is_connected = True
+    initial = probe.heartbeat
+    probe.start()
+    try:
+        # Erster Cycle ist sofort (is_connected=True beim Start),
+        # ohne 5s wait.
+        deadline = _time.monotonic() + 1.0
+        while probe.heartbeat == initial and _time.monotonic() < deadline:
+            _time.sleep(0.05)
+    finally:
+        probe.stop()
+        probe.join(timeout=2)
+    assert probe.heartbeat > initial, 'heartbeat did not increment'
+
+
+def test_probe_thread_idle_when_disconnected():
+    """Probe.run with is_connected=False must NOT call call_methods()
+    (no publishes happen)."""
+    import time as _time
+    probe = _make_probe(methods='ping')
+    probe.is_connected = False
+    probe.client.reset_mock()
+    probe.start()
+    try:
+        _time.sleep(0.2)
+    finally:
+        probe.stop()
+        probe.join(timeout=2)
+    assert probe.client.publish.call_count == 0
+    assert probe.heartbeat == 0
+
+
 def test_call_methods_late_binds_via_methods_module():
     """Patches applied AFTER probe init must still take effect."""
     probe = _make_probe(methods='temperatures')
