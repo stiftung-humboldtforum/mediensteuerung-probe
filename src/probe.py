@@ -113,7 +113,9 @@ class Probe(Thread):
         )
 
     def call_methods(self):
-        self.client.publish(f'probe/{self.fqdn}/capabilities', self.capabilities)
+        # capabilities werden in on_connect() retained publisht — kein
+        # Bedarf, sie alle 5s erneut zu schicken (waere QoS 0 ohne retain
+        # und reiner Traffic-Muell).
         for name, method in self.methods.items():
             try:
                 if name == 'mpv_file_pos_sec':
