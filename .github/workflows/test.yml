@@ -14,8 +14,21 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest]
+        os: [ubuntu-latest, macos-latest]
         python-version: ['3.9', '3.10', '3.11', '3.12', '3.13']
+        # macOS uses methods._stub.py (no pycaw / no LHM / no wpctl).
+        # Tests target the platform-agnostic codepath; this job mainly
+        # verifies _stub stays import-clean and macOS-Devs aren't
+        # surprised by a regression.
+        exclude:
+          # macos-latest only ships modern Pythons via setup-python;
+          # narrowing the matrix avoids unnecessary runners.
+          - os: macos-latest
+            python-version: '3.9'
+          - os: macos-latest
+            python-version: '3.10'
+          - os: macos-latest
+            python-version: '3.11'
 
     steps:
       - uses: actions/checkout@v4
