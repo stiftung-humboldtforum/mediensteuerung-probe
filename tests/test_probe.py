@@ -35,8 +35,18 @@ def test_probe_allowed_methods():
 def test_on_disconnect_sets_flag():
     probe = _make_probe()
     probe.is_connected = True
-    probe.on_disconnect(Mock(), None, 0)
+    probe.connected_event.set()
+    probe.on_disconnect(Mock(), None, disconnect_flags=0, reason_code=0)
     assert probe.is_connected is False
+    assert not probe.connected_event.is_set()
+
+
+def test_on_connect_sets_event():
+    probe = _make_probe()
+    assert not probe.connected_event.is_set()
+    probe.on_connect(probe.client, None, flags=Mock(), reason_code=0)
+    assert probe.connected_event.is_set()
+    assert probe.is_connected is True
 
 
 @patch('methods.display', return_value='1920x1080, 60 Hz')

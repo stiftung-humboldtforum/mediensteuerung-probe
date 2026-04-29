@@ -1,5 +1,5 @@
 import time
-from threading import Thread
+from threading import Event, Thread
 
 from paho.mqtt.client import Client, SubscribeOptions, MQTTMessage
 
@@ -22,6 +22,11 @@ class Probe(Thread):
         self._running = False
 
         self.is_connected = False
+        # Set in on_connect, cleared in on_disconnect. Used by App.run()
+        # to wait for the initial broker handshake instead of a blind
+        # time.sleep(3) — schuetzt vor Reconnect-Flap auf langsamen
+        # Brokern.
+        self.connected_event = Event()
         self.playback_pos = None
         # Heartbeat counter: bumped after each successful call_methods()
         # cycle. The App-Thread uses this to gate sd_notify watchdog
@@ -157,10 +162,12 @@ class Probe(Thread):
             f'manager/{self.fqdn}/#',
             options=SubscribeOptions(noLocal=True)
         )
+        self.connected_event.set()
 
     def on_disconnect(self, client, userdata, disconnect_flags=None, reason_code=None, properties=None):
         logger.info('Disconnected reason_code=%s', reason_code)
         self.is_connected = False
+        self.connected_event.clear()
 
     def on_message(self, client: Client, userdata, msg: MQTTMessage):
         parts = msg.topic.split('/')

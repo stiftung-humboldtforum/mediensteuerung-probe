@@ -102,11 +102,18 @@ class App:
                 self.mqtt_client.connect(self.mqtt_hostname, self.mqtt_port, 60)
                 self.mqtt_client.loop_start()
 
+                # Warte auf das tatsaechliche on_connect-Callback statt
+                # blindem time.sleep(3). Auf langsamen Brokern wuerde
+                # sleep(3) zu frueh enden und die while-Loop sofort
+                # rauswerfen → Reconnect-Flap.
+                if not self.probe.connected_event.wait(timeout=15):
+                    logger.error('MQTT connect handshake timed out after 15s')
+                    raise TimeoutError('MQTT connect timeout')
+
                 if self.notify_enabled:
                     self.notify.ready()
                     self.notify.status('Connected.')
                     self.notify.notify()
-                time.sleep(3)
 
                 last_heartbeat = self.probe.heartbeat
                 stalled_cycles = 0
