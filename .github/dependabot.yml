@@ -1,0 +1,27 @@
+version: 2
+updates:
+  # Python dependencies (requirements.txt + requirements-dev.txt)
+  - package-ecosystem: pip
+    directory: /
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+      - python
+    # Group minor/patch updates together to reduce PR noise; majors
+    # always come as individual PRs (more careful review).
+    groups:
+      python-minor-patch:
+        update-types:
+          - minor
+          - patch
+
+  # GitHub Actions versions (e.g. actions/checkout@v4 → v5)
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    labels:
+      - dependencies
+      - ci
