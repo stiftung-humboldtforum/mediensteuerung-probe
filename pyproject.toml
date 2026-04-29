@@ -60,6 +60,9 @@ addopts = "-v"
 filterwarnings = [
     "error::DeprecationWarning",
 ]
+markers = [
+    "integration: requires a running MQTT broker (PROBE_TEST_BROKER:PROBE_TEST_PORT, default 127.0.0.1:11883). Auto-skipped if no broker is reachable. Run with: docker compose -f docker-compose.test.yml up -d, then pytest -m integration.",
+]
 
 [tool.coverage.run]
 source = ["src"]

@@ -1,0 +1,31 @@
+# Test-Infrastruktur fuer Integration-Tests.
+#
+# Startet einen Mosquitto-MQTT-Broker auf 127.0.0.1:11883 mit
+# allow_anonymous (= keine Auth, kein TLS — nur fuer lokale Tests).
+#
+# Usage:
+#   docker compose -f docker-compose.test.yml up -d
+#   pytest -m integration
+#   docker compose -f docker-compose.test.yml down
+#
+# Falls kein Docker zur Hand: alternativ direkt
+#   mosquitto -p 11883 -v
+# (brew install mosquitto / apt install mosquitto)
+#
+# Tests sind broker-agnostisch — Host und Port via env-vars
+# PROBE_TEST_BROKER (default 127.0.0.1) und PROBE_TEST_PORT (default
+# 11883) anpassbar.
+
+services:
+  mosquitto:
+    image: eclipse-mosquitto:2
+    container_name: humboldt-probe-test-broker
+    ports:
+      - "11883:1883"
+    volumes:
+      - ./mosquitto/test.conf:/mosquitto/config/mosquitto.conf:ro
+    healthcheck:
+      test: ["CMD", "mosquitto_sub", "-h", "127.0.0.1", "-t", "$$SYS/broker/version", "-W", "1", "-C", "1"]
+      interval: 2s
+      timeout: 1s
+      retries: 5

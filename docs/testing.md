@@ -82,10 +82,60 @@ unterschiedlich verhalten. 100% Branch-Coverage auf macOS sagt nichts
 
 ---
 
-## 3. Integration-Tests mit lokalem Mosquitto
+## 3. Integration-Tests (`pytest -m integration`)
 
-Echtes MQTT-Verhalten (Connect, Subscribe, Retained, Last-Will, QoS)
-nur mit echtem Broker beobachtbar. Setup:
+`tests/test_integration.py` enthält 8 Tests die die **wirklich
+getestet wird ob die Probe ueber MQTT korrekt agiert**:
+
+| Test | Was wird verifiziert |
+|------|----------------------|
+| `test_probe_publishes_connected_retained` | retained `connected="1"` topic + retain-flag |
+| `test_probe_publishes_capabilities_retained` | retained capabilities CSV |
+| `test_probe_publishes_boot_time_retained` | retained boot_time mit Unix-Epoch |
+| `test_probe_periodic_cycle_publishes_sensors` | Innerhalb 8s sind ping/uptime/errors/boot_time auf dem Bus |
+| `test_command_ping_roundtrip` | `manager/<fqdn>/ping` → 'received' + 'complete' Response |
+| `test_command_blocked_returns_method_not_allowed` | Capability-Gate live: shutdown wird abgewiesen |
+| `test_module_attribute_attack_blocked` | COMMANDS-Whitelist live: 'os' wird nicht aufgerufen |
+| `test_last_will_published_on_unclean_disconnect` | SIGKILL → connected="0" via Broker-Will (~25-80s) |
+
+Diese Tests starten den **echten** Probe-Subprocess (`src/app.py`)
+gegen einen **echten** Mosquitto und sprechen mit ihm ueber **echtes**
+paho-mqtt — kein Mocking. Alles was Unit-Tests nicht abdecken
+(Retained, Last-Will, QoS-ACKs, Subscribe-Patterns) wird hier verifiziert.
+
+Tests skippen automatisch wenn kein Broker erreichbar ist (siehe
+`tests/conftest.py::pytest_collection_modifyitems`).
+
+### 3a. Lokal: Broker via Docker oder Mosquitto
+
+**Variante A — Docker:**
+```bash
+docker compose -f docker-compose.test.yml up -d
+pytest -m integration
+docker compose -f docker-compose.test.yml down
+```
+
+**Variante B — Mosquitto direkt:**
+```bash
+# macOS:  brew install mosquitto
+# Debian: sudo apt install mosquitto
+mosquitto -p 11883 -v &
+pytest -m integration
+kill %1
+```
+
+**Anderer Broker (z.B. Staging):**
+```bash
+PROBE_TEST_BROKER=staging.mqtt.example.com PROBE_TEST_PORT=1883 \
+  pytest -m integration
+```
+
+Der `PROBE_TEST_BROKER:PROBE_TEST_PORT` Env-Var-Override macht die
+Tests broker-agnostisch — gleicher Test-Code laeuft gegen lokales
+mosquitto, gegen einen Docker-Container oder gegen einen echten
+Staging-Broker.
+
+### 3b. Manuelle Beobachtung — was die Tests automatisieren
 
 ### 3a. Mosquitto starten
 
