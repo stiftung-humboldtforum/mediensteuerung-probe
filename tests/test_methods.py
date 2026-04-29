@@ -1,8 +1,11 @@
 import json
+import subprocess
 from unittest.mock import patch, mock_open
 from collections import namedtuple
 
-from methods import call_method, ping, boot_time, easire
+import pytest
+
+from methods import call_method, ping, boot_time, easire, mpv_file_pos_sec
 
 
 def test_call_method_success():
@@ -91,6 +94,33 @@ def test_fans_linux(mock_fans):
     result = fans()
     assert 'thinkpad' in result
     assert result['thinkpad'][0]['current'] == 2500
+
+
+# --- Subprocess-Timeout coverage (R1) -------------------------------------
+
+@patch('methods._linux.subprocess.check_output')
+def test_is_muted_linux_timeout_propagates(mock_output):
+    mock_output.side_effect = subprocess.TimeoutExpired(['wpctl'], 3)
+    from methods._linux import is_muted
+    with pytest.raises(subprocess.TimeoutExpired):
+        is_muted()
+
+
+@patch('methods._linux.subprocess.run')
+def test_display_linux_timeout_returns_none_via_caller(mock_run):
+    """display() doesn't catch TimeoutExpired itself — caller (Probe.check_display)
+    is supposed to. Here we just verify the raise propagates cleanly."""
+    mock_run.side_effect = subprocess.TimeoutExpired(['xrandr', '--current'], 5)
+    from methods._linux import display
+    with pytest.raises(subprocess.TimeoutExpired):
+        display()
+
+
+@patch('methods.subprocess.run')
+def test_mpv_file_pos_sec_timeout_propagates(mock_run):
+    mock_run.side_effect = subprocess.TimeoutExpired(['mpv_control'], 3)
+    with pytest.raises(subprocess.TimeoutExpired):
+        mpv_file_pos_sec()
 
 
 # --- Common easire (psutil-based, platform-agnostic) ----------------------

@@ -128,6 +128,27 @@ def test_check_easire_exception(mock_easire):
     assert probe.errors['easire'] == 'error'
 
 
+@patch('methods.display')
+def test_check_display_subprocess_timeout(mock_display):
+    """If display() raises TimeoutExpired (from xrandr hang), check_display
+    must record 'error' and not crash the Probe-Thread."""
+    import subprocess
+    mock_display.side_effect = subprocess.TimeoutExpired(['xrandr'], 5)
+    probe = _make_probe()
+    probe.check_display()
+    assert probe.errors['display'] == 'error'
+
+
+@patch('methods.mpv_file_pos_sec')
+def test_check_playback_subprocess_timeout(mock_mpv):
+    """Same for mpv_control hangs."""
+    import subprocess
+    mock_mpv.side_effect = subprocess.TimeoutExpired(['mpv_control'], 3)
+    probe = _make_probe()
+    probe.check_playback_pos()
+    assert probe.errors['playback'] == 'error'
+
+
 def test_on_message_blocked():
     probe = _make_probe(capabilities='mute,unmute')
     client = Mock()
