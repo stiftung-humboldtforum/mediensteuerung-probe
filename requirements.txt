@@ -1,4 +1,4 @@
-paho-mqtt==1.6.1
+paho-mqtt>=2.0.0,<3.0.0
 sd-notify==0.1.0; sys_platform == 'linux'
 psutil
 click

@@ -139,8 +139,8 @@ class Probe(Thread):
     def stop(self):
         self._running = False
 
-    def on_connect(self, client: Client, *args):
-        logger.info('Connected %s', args)
+    def on_connect(self, client: Client, userdata, flags, reason_code, properties=None):
+        logger.info('Connected reason_code=%s flags=%s', reason_code, flags)
         self.is_connected = True
         # retain=True so newly subscribing managers see "alive" without
         # waiting for the next sensor cycle.
@@ -152,8 +152,8 @@ class Probe(Thread):
             options=SubscribeOptions(noLocal=True)
         )
 
-    def on_disconnect(self, _, *args):
-        logger.info('Disconnected %s', args)
+    def on_disconnect(self, client, userdata, disconnect_flags=None, reason_code=None, properties=None):
+        logger.info('Disconnected reason_code=%s', reason_code)
         self.is_connected = False
 
     def on_message(self, client: Client, userdata, msg: MQTTMessage):

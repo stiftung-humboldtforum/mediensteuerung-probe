@@ -55,7 +55,10 @@ class App:
 
     def _setup(self):
         logger.info('FQDN: %s', self.fqdn)
-        self.mqtt_client = mqtt.Client(client_id=self.fqdn)
+        self.mqtt_client = mqtt.Client(
+            callback_api_version=mqtt.CallbackAPIVersion.VERSION2,
+            client_id=self.fqdn,
+        )
         self.mqtt_client.enable_logger(logger)
 
         # Last Will: when the probe drops unexpectedly the broker
