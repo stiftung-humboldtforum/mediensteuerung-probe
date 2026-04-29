@@ -43,7 +43,7 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
     "pytest>=8.0.0,<10.0.0",
-    "pip-tools",  # for re-generating requirements.lock.txt
+    "pip-tools>=7.0.0,<8.0.0",  # for re-generating requirements.lock.txt
 ]
 
 [project.urls]

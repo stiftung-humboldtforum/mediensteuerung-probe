@@ -1,2 +1,3 @@
 -r requirements.txt
 pytest>=8.0.0,<10.0.0
+pip-tools>=7.0.0,<8.0.0  # for pip-compile (requirements.lock.txt)
