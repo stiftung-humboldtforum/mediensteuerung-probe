@@ -87,6 +87,27 @@ def test_check_playback_pos_stale(mock_mpv):
     assert probe.errors['playback'] == 'error'
 
 
+@patch('methods.mpv_file_pos_sec', side_effect=ValueError('boom'))
+def test_check_playback_pos_exception(mock_mpv):
+    probe = _make_probe()
+    probe.check_playback_pos()
+    assert probe.errors['playback'] == 'error'
+
+
+@patch('methods.display', side_effect=RuntimeError('xrandr down'))
+def test_check_display_exception(mock_display):
+    probe = _make_probe()
+    probe.check_display()
+    assert probe.errors['display'] == 'error'
+
+
+@patch('methods.easire', side_effect=OSError('proc gone'))
+def test_check_easire_exception(mock_easire):
+    probe = _make_probe()
+    probe.check_easire()
+    assert probe.errors['easire'] == 'error'
+
+
 def test_on_message_blocked():
     probe = _make_probe(capabilities='mute,unmute')
     client = Mock()

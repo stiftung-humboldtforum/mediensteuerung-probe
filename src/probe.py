@@ -52,7 +52,16 @@ class Probe(Thread):
         self.errors = {}
 
     def check_playback_pos(self):
-        new_playback_pos = methods.mpv_file_pos_sec()
+        try:
+            new_playback_pos = methods.mpv_file_pos_sec()
+        except Exception:
+            logger.exception('mpv_file_pos_sec')
+            self.errors['playback'] = 'error'
+            self.client.publish(
+                f'probe/{self.fqdn}/mpv_file_pos_sec',
+                make_response(error=dict(message='check failed')),
+            )
+            return
         if new_playback_pos == self.playback_pos:
             self.errors['playback'] = 'error'
         else:
@@ -64,7 +73,16 @@ class Probe(Thread):
         )
 
     def check_display(self):
-        result = methods.display()
+        try:
+            result = methods.display()
+        except Exception:
+            logger.exception('display')
+            self.errors['display'] = 'error'
+            self.client.publish(
+                f'probe/{self.fqdn}/display',
+                make_response(error=dict(message='check failed')),
+            )
+            return
         if result is not None:
             self.errors['display'] = 'ok'
         else:
@@ -75,7 +93,16 @@ class Probe(Thread):
         )
 
     def check_easire(self):
-        result = methods.easire()
+        try:
+            result = methods.easire()
+        except Exception:
+            logger.exception('easire')
+            self.errors['easire'] = 'error'
+            self.client.publish(
+                f'probe/{self.fqdn}/easire',
+                make_response(error=dict(message='check failed')),
+            )
+            return
         if result is not None:
             self.errors['easire'] = 'ok'
         else:
