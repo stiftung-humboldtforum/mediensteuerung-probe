@@ -1,14 +1,12 @@
 import time
 from threading import Thread
-from typing import Union, Callable
-from inspect import getmembers, isfunction
 
 from paho.mqtt.client import Client, SubscribeOptions, MQTTMessage
 
 
 from misc import error_response, logger, parse_payload, make_response
 import methods
-from methods import call_method
+from methods import call_method, SENSORS, COMMANDS
 
 
 class Probe(Thread):
@@ -31,18 +29,21 @@ class Probe(Thread):
 
         try:
             periodic_methods = self.config['PROBE_METHODS'].split(',')
-        except Exception:
+        except KeyError:
             logger.error('No PROBE_METHODS in userconfig.txt')
             periodic_methods = []
 
         try:
             self.capabilities = self.config['PROBE_CAPABILITIES']
-        except Exception:
+        except KeyError:
             logger.error('No PROBE_CAPABILITIES in userconfig.txt')
             self.capabilities = 'wake,shutdown,reboot'
 
         self._allowed_methods = set(self.capabilities.split(','))
-        self.methods = {name: function for name, function in getmembers(methods, isfunction) if name in periodic_methods}
+        self.methods = {name: SENSORS[name] for name in periodic_methods if name in SENSORS}
+        unknown = [name for name in periodic_methods if name and name not in SENSORS]
+        if unknown:
+            logger.warning('Ignoring unknown PROBE_METHODS: %s', ','.join(unknown))
         self.errors = {}
 
     def check_playback_pos(self):
@@ -115,7 +116,7 @@ class Probe(Thread):
             response = make_response(error=dict(message='Method not allowed'))
             client.publish(f'probe/{self.fqdn}/{method_name}', response)
             return
-        method: Union[Callable, None] = getattr(methods, method_name, None)
+        method = getattr(methods, method_name, None) if method_name in COMMANDS else None
         response = make_response(data=dict(status='received'))
         client.publish(f'probe/{self.fqdn}/{method_name}', response)
         if method is None:
@@ -124,6 +125,6 @@ class Probe(Thread):
             )
         else:
             args, kwargs = parse_payload(msg.payload)
-            response = methods.call_method(method, *args, **kwargs)
+            response = call_method(method, *args, **kwargs)
         logger.debug(response)
         client.publish(f'probe/{self.fqdn}/{method_name}', response)

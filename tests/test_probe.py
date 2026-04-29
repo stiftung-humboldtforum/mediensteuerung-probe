@@ -141,3 +141,27 @@ def test_on_message_unknown_method():
     assert len(published) == 2
     response = json.loads(published[1][0][1])
     assert response['error']['message'] == 'Unknown method'
+
+
+def test_on_message_module_attribute_blocked():
+    probe = _make_probe(capabilities='os,subprocess,call_method')
+    client = Mock()
+
+    for forbidden in ('os', 'subprocess', 'call_method'):
+        client.reset_mock()
+        msg = Mock()
+        msg.topic = f'manager/test.local/{forbidden}'
+        msg.payload = b''
+        probe.on_message(client, None, msg)
+        published = client.publish.call_args_list
+        final = json.loads(published[-1][0][1])
+        assert final['error']['message'] == 'Unknown method', f'{forbidden} was not blocked'
+
+
+def test_periodic_methods_excludes_commands():
+    probe = _make_probe(methods='ping,shutdown,reboot,mute,temperatures')
+    assert 'shutdown' not in probe.methods
+    assert 'reboot' not in probe.methods
+    assert 'mute' not in probe.methods
+    assert 'ping' in probe.methods
+    assert 'temperatures' in probe.methods

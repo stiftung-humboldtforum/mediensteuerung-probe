@@ -7,6 +7,7 @@ if platform.system() == 'Windows':
 from .sensors import temperatures, fans, boot_time, uptime, mpv_file_pos_sec, display, easire
 from misc import logger, make_response
 
+
 def call_method(method, *args, **kwargs):
     try:
         result = method(*args, **kwargs)
@@ -76,3 +77,24 @@ def unmute():
         volume.SetMute(0, None)
     else:
         raise NotImplementedError(f'unmute not supported on {platform.system()}')
+
+
+SENSORS = {
+    'ping': ping,
+    'temperatures': temperatures,
+    'fans': fans,
+    'uptime': uptime,
+    'boot_time': boot_time,
+    'mpv_file_pos_sec': mpv_file_pos_sec,
+    'display': display,
+    'easire': easire,
+    'is_muted': is_muted,
+}
+
+COMMANDS = {
+    'shutdown': shutdown,
+    'reboot': reboot,
+    'mute': mute,
+    'unmute': unmute,
+    'ping': ping,
+}
