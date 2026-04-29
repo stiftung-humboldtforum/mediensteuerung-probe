@@ -1,4 +1,3 @@
-import time
 from threading import Event, Thread
 
 from paho.mqtt.client import Client, SubscribeOptions, MQTTMessage
@@ -19,7 +18,10 @@ class Probe(Thread):
         self.client = client
         self.config = config
 
-        self._running = False
+        # Event statt running-bool: stop() setzt das Event und der
+        # run()-Loop wacht aus der Wait-Phase sofort auf, statt bis
+        # zu 5s im time.sleep zu haengen.
+        self._stop_event = Event()
 
         self.is_connected = False
         # Set in on_connect, cleared in on_disconnect. Used by App.run()
@@ -140,15 +142,16 @@ class Probe(Thread):
         self.client.publish(f'probe/{self.fqdn}/errors', status_response(self.errors))
 
     def run(self):
-        self._running = True
-        while self._running:
+        while not self._stop_event.is_set():
             if self.is_connected:
                 self.call_methods()
                 self.heartbeat += 1
-            time.sleep(5)
+            # Interruptible sleep — stop() returns instantly statt
+            # bis zu 5s zu warten.
+            self._stop_event.wait(5)
 
     def stop(self):
-        self._running = False
+        self._stop_event.set()
 
     def on_connect(self, client: Client, userdata, flags, reason_code, properties=None):
         logger.info('Connected reason_code=%s flags=%s', reason_code, flags)
