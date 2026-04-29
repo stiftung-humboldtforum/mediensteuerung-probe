@@ -1,49 +1,51 @@
 """Stubs for unsupported platforms (e.g. macOS dev machines).
 
-All platform-specific operations raise NotImplementedError. Common
-methods (ping, boot_time, mpv_file_pos_sec, easire) live in
-methods/__init__.py and work on any platform.
+Power-/Audio-Commands raise NotImplementedError so a probe accidentally
+running here can't pretend to mute/shutdown the host. Read-only sensors
+return empty/None so test discovery and import-time checks don't crash.
 """
 import platform
+import time
+from typing import NoReturn, Optional
+
+import psutil
 
 
-def _unsupported(name):
+def _unsupported(name: str) -> NoReturn:
     raise NotImplementedError(f'{name} not supported on {platform.system()}')
 
 
-def shutdown():
+def shutdown() -> NoReturn:
     _unsupported('shutdown')
 
 
-def reboot():
+def reboot() -> NoReturn:
     _unsupported('reboot')
 
 
-def is_muted():
+def is_muted() -> NoReturn:
     _unsupported('is_muted')
 
 
-def mute():
+def mute() -> NoReturn:
     _unsupported('mute')
 
 
-def unmute():
+def unmute() -> NoReturn:
     _unsupported('unmute')
 
 
-def temperatures():
+def temperatures() -> dict[str, list[dict]]:
     return {}
 
 
-def fans():
+def fans() -> dict[str, list[dict]]:
     return {}
 
 
-def uptime():
-    import psutil
-    import time
+def uptime() -> float:
     return time.time() - psutil.boot_time()
 
 
-def display():
+def display() -> Optional[str]:
     return None
