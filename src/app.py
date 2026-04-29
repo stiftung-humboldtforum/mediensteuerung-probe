@@ -134,7 +134,13 @@ class App:
             except Exception as e:
                 logger.exception(e)
                 if self.notify_enabled:
-                    self.notify.status('Failed.')
+                    # Exception-Typ und Kurzbeschreibung statt generischem
+                    # 'Failed.' — der Manager sieht ueber sd_notify den
+                    # Statustext und kann unterschiedliche Failure-Modi
+                    # auseinanderhalten (TimeoutError vs ConnectionRefused
+                    # vs CertificateError).
+                    detail = f'{type(e).__name__}: {e}'[:200]
+                    self.notify.status(f'Failed: {detail}')
                     self.notify.notify()
 
             self.stop()
