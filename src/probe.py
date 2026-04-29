@@ -36,8 +36,8 @@ class Probe(Thread):
         try:
             self.capabilities = self.config['PROBE_CAPABILITIES']
         except KeyError:
-            logger.error('No PROBE_CAPABILITIES in userconfig.txt')
-            self.capabilities = 'wake,shutdown,reboot'
+            logger.error('No PROBE_CAPABILITIES in userconfig.txt — refusing all commands (fail-closed)')
+            self.capabilities = ''
 
         self._allowed_methods = set(self.capabilities.split(','))
         self.methods = {name: SENSORS[name] for name in periodic_methods if name in SENSORS}

@@ -158,6 +158,22 @@ def test_on_message_module_attribute_blocked():
         assert final['error']['message'] == 'Unknown method', f'{forbidden} was not blocked'
 
 
+def test_missing_capabilities_fail_closed():
+    client = Mock()
+    config = {'PROBE_METHODS': 'ping'}
+    probe = Probe('test.local', client=client, config=config)
+    assert probe.capabilities == ''
+    assert probe._allowed_methods == {''}
+
+    msg = Mock()
+    msg.topic = 'manager/test.local/shutdown'
+    msg.payload = b''
+    probe.on_message(client, None, msg)
+    published = client.publish.call_args_list
+    response = json.loads(published[-1][0][1])
+    assert response['error']['message'] == 'Method not allowed'
+
+
 def test_periodic_methods_excludes_commands():
     probe = _make_probe(methods='ping,shutdown,reboot,mute,temperatures')
     assert 'shutdown' not in probe.methods
