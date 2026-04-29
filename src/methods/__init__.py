@@ -1,9 +1,11 @@
 import os
 import platform
 import subprocess
-import sys
-if platform.system() == 'Windows':
-    sys.coinit_flags = 0  # COINIT_MULTITHREADED — match pythonnet/LHM
+
+# Note: sys.coinit_flags is set in app.py before any imports happen, so
+# that COM is initialized in MTA mode for both pythonnet/LHM and pycaw.
+# Setting it here would be too late if app.py imports were re-ordered.
+
 from .sensors import temperatures, fans, boot_time, uptime, mpv_file_pos_sec, display, easire
 from misc import logger, make_response
 

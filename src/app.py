@@ -1,3 +1,12 @@
+import sys
+import platform
+# COM apartment mode must be set before any module touches COM. Because
+# the methods package imports pythonnet/LHM (Windows) and pycaw, this
+# has to happen at the very top of app.py, before any other imports
+# that might transitively pull in win32com / comtypes / pythonnet.
+if platform.system() == 'Windows':
+    sys.coinit_flags = 0  # COINIT_MULTITHREADED — match pythonnet/LHM
+
 import time
 import socket
 import logging
