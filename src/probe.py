@@ -155,10 +155,10 @@ class Probe(Thread):
         self.is_connected = True
         # retain=True so newly subscribing managers see "alive" without
         # waiting for the next sensor cycle.
-        client.publish(f'probe/{self.fqdn}/connected', payload='1', qos=1, retain=True)
+        self.client.publish(f'probe/{self.fqdn}/connected', payload='1', qos=1, retain=True)
         self.client.publish(f'probe/{self.fqdn}/capabilities', self.capabilities, qos=1, retain=True)
         self.client.publish(f'probe/{self.fqdn}/boot_time', call_method(methods.boot_time), qos=1, retain=True)
-        client.subscribe(
+        self.client.subscribe(
             f'manager/{self.fqdn}/#',
             options=SubscribeOptions(noLocal=True)
         )
