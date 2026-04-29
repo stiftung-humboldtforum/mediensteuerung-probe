@@ -1,0 +1,64 @@
+# Humboldt-Probe systemd unit (Beispiel)
+#
+# Pfade entsprechend anpassen, dann:
+#   sudo cp humboldt-probe.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now humboldt-probe
+#
+# Logs: journalctl -u humboldt-probe -f
+#
+# Voraussetzungen auf dem Host:
+#   - Python 3.9+ in /usr/bin/python3 (oder Pfad anpassen)
+#   - Source-Tree unter /opt/humboldt-probe
+#   - userconfig.txt + TLS-Zertifikate unter /etc/humboldt-probe/
+#   - User 'probe' (sudoers-Eintrag fuer shutdown/reboot, siehe unten)
+#   - wpctl + xrandr installiert
+#
+# Sudoers-Snippet (visudo) fuer shutdown/reboot ohne Passwort:
+#   probe ALL=(ALL) NOPASSWD: /sbin/shutdown, /sbin/reboot
+
+[Unit]
+Description=Humboldt-Probe — MQTT health/control agent
+Documentation=https://github.com/stiftung-humboldtforum/mediensteuerung-probe
+After=network-online.target pipewire.service
+Wants=network-online.target
+
+[Service]
+Type=notify
+NotifyAccess=main
+WatchdogSec=30s
+
+User=probe
+Group=probe
+WorkingDirectory=/opt/humboldt-probe
+
+# Probe braucht Zugriff aufs aktive Display + PipeWire-Session des
+# eingeloggten Kiosk-Users — die naechsten zwei Zeilen anpassen falls
+# die UID nicht 1000 ist.
+Environment=DISPLAY=:0
+Environment=XDG_RUNTIME_DIR=/run/user/1000
+
+ExecStart=/usr/bin/python3 src/app.py \
+    --config_file=/etc/humboldt-probe/userconfig.txt \
+    --mqtt_hostname=mqtt.example.com \
+    --mqtt_port=8883 \
+    --ca_certificate=/etc/humboldt-probe/ca.pem \
+    --certfile=/etc/humboldt-probe/client.pem \
+    --keyfile=/etc/humboldt-probe/client.key \
+    --loglevel=INFO
+
+# Restart-Strategie: bei jedem Crash neu starten, max alle 5s.
+# sd_notify-Watchdog feuert nach 30s ohne Heartbeat (siehe B6) und
+# triggert dann auch einen Restart.
+Restart=always
+RestartSec=5
+
+# Hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/log/humboldt-probe
+
+[Install]
+WantedBy=multi-user.target

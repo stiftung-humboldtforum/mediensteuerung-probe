@@ -193,7 +193,18 @@ and prints the integer seconds. See e.g.
 
 ### Linux (systemd)
 
-Create a systemd unit file and enable it. The probe supports `sd_notify` for watchdog integration.
+A reference unit file is at [`systemd/humboldt-probe.service`](systemd/humboldt-probe.service).
+Adjust paths and then:
+
+```bash
+sudo cp systemd/humboldt-probe.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now humboldt-probe
+journalctl -u humboldt-probe -f
+```
+
+The unit is `Type=notify` with `WatchdogSec=30s`, so the probe's
+heartbeat (see B6) is enforced — a stalled probe is auto-restarted.
 
 ### Windows (NSSM)
 
