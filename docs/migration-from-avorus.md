@@ -1,4 +1,12 @@
-# Changelog: avorus-probe (Original) -> humboldt_probe (Linux)
+# Migration: avorus-probe → humboldt_probe (Linux)
+
+> **Hinweis:** Dieses Dokument beschreibt eine einmalige Migration vom Original
+> `avorus-probe` zur ersten Linux-Deployment-Version. Es ist KEIN laufender
+> Changelog — fuer aktuelle Aenderungen siehe `git log`. Hier dokumentiert
+> aus historischen Gruenden (Verstaendnis warum bestimmte Entscheidungen
+> getroffen wurden). Einige hier dokumentierte Code-Stellen wurden seither
+> erneut umgebaut (z.B. subprocess-Calls auf list-Form mit timeout, Audio-Pfad
+> bleibt wpctl).
 
 Dieses Dokument beschreibt alle Unterschiede zwischen dem Original (`avorus-probe`) und der
 Linux-Deployment-Version (`humboldt_probe`). Nur Code-Dateien werden verglichen — Dateien die
