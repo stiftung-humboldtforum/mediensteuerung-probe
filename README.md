@@ -42,6 +42,40 @@ The probe uses two topic prefixes:
 - **`probe/<fqdn>/...`** — Outbound: sensor data and command responses published by the probe.
 - **`manager/<fqdn>/...`** — Inbound: commands sent to the probe from the manager.
 
+### Outbound topics in detail
+
+| Topic                                | Retained | QoS | Payload                                                                 |
+| ------------------------------------ | -------- | --- | ----------------------------------------------------------------------- |
+| `probe/<fqdn>/connected`             | yes      | 1   | `"1"` while online, `"0"` set as MQTT Last-Will on unclean disconnect.  |
+| `probe/<fqdn>/capabilities`          | yes      | 1   | CSV string from `PROBE_CAPABILITIES` (e.g. `wake,shutdown,reboot`).     |
+| `probe/<fqdn>/boot_time`             | yes      | 1   | JSON envelope with Unix-epoch float (`{"data":{"result":1714...}}`).    |
+| `probe/<fqdn>/<sensor>`              | no       | 0   | JSON envelope with sensor result, published every 5s.                   |
+| `probe/<fqdn>/errors`                | no       | 0   | JSON envelope with status dict (`{display:'ok', easire:'error', ...}`). |
+| `probe/<fqdn>/<command>`             | no       | 1   | Response to a manager command (`{"data":{"status":"received"}}` then `{"data":{"status":"complete","result":...}}` or `{"error":{...}}`). |
+
+### Inbound topics
+
+| Topic                                | Payload                                                                              |
+| ------------------------------------ | ------------------------------------------------------------------------------------ |
+| `manager/<fqdn>/<command>`           | Optional JSON `{"args":[...], "kwargs":{...}}`. Empty payload means no-arg call.     |
+
+The probe subscribes with `noLocal=True`, so its own outbound publishes
+are not echoed back as commands.
+
+### Response envelope
+
+All JSON envelopes follow:
+
+```json
+{"data": {"status": "complete", "result": <sensor-or-command-result>}}
+```
+
+or, on failure:
+
+```json
+{"error": {"message": "<ExceptionName>", "errors": [...]}}
+```
+
 ## System Requirements
 
 ### Linux
