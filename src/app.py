@@ -138,6 +138,19 @@ def main(
     if mqtt_port is None:
         mqtt_port = 1883 if no_tls else 8883
 
+    if no_tls:
+        is_local = mqtt_hostname in ('localhost', '127.0.0.1', '::1')
+        banner = '*' * 70
+        if is_local:
+            logger.warning('%s', banner)
+            logger.warning('--no_tls active (localhost broker). For local testing only.')
+            logger.warning('%s', banner)
+        else:
+            logger.warning('%s', banner)
+            logger.warning('--no_tls active against non-local broker %s — NO AUTH, NO ENCRYPTION.', mqtt_hostname)
+            logger.warning('Anyone on the network can issue probe commands. Production deployments MUST use TLS.')
+            logger.warning('%s', banner)
+
     if sd_notify is not None:
         notify = sd_notify.Notifier()
     else:
