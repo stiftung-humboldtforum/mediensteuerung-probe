@@ -48,7 +48,8 @@ jobs:
           pip install -r requirements-dev.txt
 
       - name: Run tests
-        run: pytest tests/ -v
+        # testpaths/addopts/pythonpath kommen aus pyproject.toml
+        run: pytest
 
       - name: Verify clean import (no DeprecationWarnings)
         run: |

@@ -6,7 +6,8 @@
 # pyproject.toml here is purely for:
 #   - Project metadata discovery (e.g. for GitHub linguist, PyPI
 #     scrapers, internal dashboards)
-#   - Single source of truth for tool configs (pytest, mypy, ruff)
+#   - Tool configuration (currently only pytest; if mypy or ruff
+#     get added later, their [tool.*] tables go here too)
 
 [project]
 name = "humboldt-probe"
