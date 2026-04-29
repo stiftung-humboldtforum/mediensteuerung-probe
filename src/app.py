@@ -96,11 +96,20 @@ class App:
                     self.notify.notify()
                 time.sleep(3)
 
+                last_heartbeat = self.probe.heartbeat
+                stalled_cycles = 0
                 while self.probe.is_connected:
                     logger.info('FQDN: %s', self.fqdn)
                     time.sleep(5)
-                    if self.notify_enabled:
-                        self.notify.notify()
+                    current_heartbeat = self.probe.heartbeat
+                    if current_heartbeat != last_heartbeat:
+                        last_heartbeat = current_heartbeat
+                        stalled_cycles = 0
+                        if self.notify_enabled:
+                            self.notify.notify()
+                    else:
+                        stalled_cycles += 1
+                        logger.warning('Probe heartbeat stalled (%d cycles); withholding sd_notify watchdog ping', stalled_cycles)
 
                 logger.debug('Probe is not connected')
             except Exception as e:

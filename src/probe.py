@@ -23,6 +23,11 @@ class Probe(Thread):
 
         self.is_connected = False
         self.playback_pos = None
+        # Heartbeat counter: bumped after each successful call_methods()
+        # cycle. The App-Thread uses this to gate sd_notify watchdog
+        # pings — if the Probe-Thread hangs, the counter stalls and the
+        # watchdog times out, allowing systemd to restart the unit.
+        self.heartbeat = 0
         self.client.on_connect = self.on_connect
         self.client.on_disconnect = self.on_disconnect
         self.client.on_message = self.on_message
@@ -101,6 +106,7 @@ class Probe(Thread):
         while self._running:
             if self.is_connected:
                 self.call_methods()
+                self.heartbeat += 1
             time.sleep(5)
 
     def stop(self):
