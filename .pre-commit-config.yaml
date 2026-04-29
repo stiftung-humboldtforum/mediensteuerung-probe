@@ -1,0 +1,36 @@
+# Pre-commit hooks. Install once with:
+#   pip install pre-commit
+#   pre-commit install
+#
+# Hooks then fire automatically on `git commit`.
+# To run against the full repo on demand:
+#   pre-commit run --all-files
+#
+# Skip hooks for a one-off commit (use sparingly):
+#   git commit --no-verify
+
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: mixed-line-ending
+        args: [--fix=lf]
+        exclude: \.(ps1|bat)$  # Windows scripts keep CRLF
+      - id: check-yaml
+      - id: check-toml
+      - id: check-merge-conflict
+      - id: check-added-large-files
+        args: [--maxkb=1000]  # LHM-DLL ist ~720 KB, drunter
+      - id: detect-private-key
+
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.7.4
+    hooks:
+      # Linter (errors only — keep noise low until the codebase is
+      # actively migrated to a stricter style).
+      - id: ruff
+        args: [--select=E9,F63,F7,F82, --output-format=full]
+        # Selects: syntax errors, undefined names, broken type
+        # comparisons. Catches real bugs without nitpicking style.
