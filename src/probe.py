@@ -80,9 +80,9 @@ class Probe(Thread):
                     self.check_easire()
                 else:
                     self.client.publish(f'probe/{self.fqdn}/{name}', call_method(method))
-                self.client.publish(f'probe/{self.fqdn}/errors', error_response(self.errors))
             except Exception:
                 logger.exception(name)
+        self.client.publish(f'probe/{self.fqdn}/errors', error_response(self.errors))
 
     def run(self):
         self._running = True
