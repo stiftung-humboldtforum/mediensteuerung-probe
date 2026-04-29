@@ -49,6 +49,16 @@ def test_on_connect_sets_event():
     assert probe.is_connected is True
 
 
+def test_on_connect_bumps_heartbeat():
+    """Connect handshake itself counts as initial heartbeat — saves
+    App.run from waiting up to 5s for the first call_methods() cycle
+    before the watchdog gets its first ping."""
+    probe = _make_probe()
+    assert probe.heartbeat == 0
+    probe.on_connect(probe.client, None, flags=Mock(), reason_code=0)
+    assert probe.heartbeat == 1
+
+
 @patch('methods.display', return_value='1920x1080, 60 Hz')
 def test_check_display_ok(mock_display):
     probe = _make_probe()

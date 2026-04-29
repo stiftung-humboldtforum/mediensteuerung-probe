@@ -165,6 +165,10 @@ class Probe(Thread):
             f'manager/{self.fqdn}/#',
             options=SubscribeOptions(noLocal=True)
         )
+        # Initialer Heartbeat-Bump — der Connect-Handshake selbst ist
+        # ein Lebenszeichen, das App.run als Watchdog-Signal nehmen kann
+        # statt bis zum ersten call_methods()-Cycle (bis zu 5s) zu warten.
+        self.heartbeat += 1
         self.connected_event.set()
 
     def on_disconnect(self, client, userdata, disconnect_flags=None, reason_code=None, properties=None):
