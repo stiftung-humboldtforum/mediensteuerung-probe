@@ -75,7 +75,7 @@ def _get_lhm_sensors(sensor_type):
     c = _get_lhm_computer()
     from LibreHardwareMonitor.Hardware import SensorType
     target = {'Temperature': SensorType.Temperature, 'Fan': SensorType.Fan}[sensor_type]
-    results = {}
+    results: dict[str, list[dict]] = {}
     for hw in c.Hardware:
         hw.Update()
         hw_type = str(hw.HardwareType)
@@ -90,12 +90,12 @@ def _get_lhm_sensors(sensor_type):
                 continue
             label = str(sensor.Name)
             key = str(hw.Name)
-            if key in results:
-                continue
+            entry = {'label': label, 'current': round(float(sensor.Value), 1)}
+            # Schema matches Linux psutil (mehrere Sensoren pro Hardware).
             if sensor_type == 'Temperature' and is_cpu_gpu:
-                results[key] = [{'label': label, 'current': round(float(sensor.Value), 1)}]
+                results.setdefault(key, []).append(entry)
             elif sensor_type == 'Fan' and ('cpu' in label.lower() or 'gpu' in label.lower()):
-                results[key] = [{'label': label, 'current': round(float(sensor.Value), 1)}]
+                results.setdefault(key, []).append(entry)
     return results
 
 
