@@ -1,0 +1,60 @@
+# Project metadata + tool configuration.
+#
+# Note: this file is intentionally NOT a build-system file (no
+# [build-system] section). The probe is deployed via plain
+# pip install -r requirements.lock.txt, not as a packaged wheel.
+# pyproject.toml here is purely for:
+#   - Project metadata discovery (e.g. for GitHub linguist, PyPI
+#     scrapers, internal dashboards)
+#   - Single source of truth for tool configs (pytest, mypy, ruff)
+
+[project]
+name = "humboldt-probe"
+version = "0.2.0"
+description = "MQTT health/control agent for AV/Digital Media installations at Humboldt Forum"
+readme = "README.md"
+requires-python = ">=3.9"
+authors = [
+    {name = "Stiftung Humboldtforum"},
+]
+keywords = ["mqtt", "iot", "monitoring", "av", "kiosk"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Operating System :: POSIX :: Linux",
+    "Operating System :: Microsoft :: Windows",
+    "Topic :: System :: Monitoring",
+    "Topic :: System :: Networking",
+]
+dependencies = [
+    "paho-mqtt>=2.0.0,<3.0.0",
+    "sd-notify==0.1.0; sys_platform == 'linux'",
+    "psutil>=5.9.0,<8.0.0",
+    "click>=8.0.0,<9.0.0",
+    "pycaw>=20240210; sys_platform == 'win32'",
+    "comtypes>=1.2.0,<2.0.0; sys_platform == 'win32'",
+    "pythonnet>=3.0.0,<4.0.0; sys_platform == 'win32'",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0,<10.0.0",
+    "pip-tools",  # for re-generating requirements.lock.txt
+]
+
+[project.urls]
+Repository = "https://github.com/stiftung-humboldtforum/mediensteuerung-probe"
+
+# --- Tool configuration ---------------------------------------------------
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+addopts = "-v"
+filterwarnings = [
+    "error::DeprecationWarning",
+]
