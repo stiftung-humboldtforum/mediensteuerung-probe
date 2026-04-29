@@ -209,22 +209,36 @@ heartbeat (see B6) is enforced — a stalled probe is auto-restarted.
 ### Windows (NSSM)
 
 ```powershell
-# Install NSSM
+# Install NSSM (one-time)
 winget install NSSM.NSSM
+```
 
-# Install the service
-nssm install HumboldtProbe "C:\Program Files\Python313\python.exe" "app.py --config_file ../userconfig.txt --mqtt_hostname <broker-ip> --mqtt_port 1883 --no_tls --loglevel INFO"
-nssm set HumboldtProbe AppDirectory C:\path\to\humboldt-probe\src
-nssm set HumboldtProbe AppStdout C:\path\to\humboldt-probe\probe.log
-nssm set HumboldtProbe AppStderr C:\path\to\humboldt-probe\probe.log
-nssm set HumboldtProbe AppRotateFiles 1
-nssm set HumboldtProbe AppRotateBytes 1048576
+Install / re-install the service via the helper script (run as
+Administrator):
 
+```powershell
+.\scripts\install-windows.ps1 `
+    -MqttHostname mqtt.example.com `
+    -CaCertificate C:\humboldt-probe\ca.pem `
+    -CertFile C:\humboldt-probe\client.pem `
+    -KeyFile C:\humboldt-probe\client.key
+```
+
+For local testing against a localhost broker:
+
+```powershell
+.\scripts\install-windows.ps1 -MqttHostname 127.0.0.1 -NoTls
+```
+
+The script is idempotent — re-running it with different args
+reconfigures the existing service in-place.
+
+```powershell
 # Manage the service
-nssm start HumboldtProbe
-nssm stop HumboldtProbe
+nssm start   HumboldtProbe
+nssm stop    HumboldtProbe
 nssm restart HumboldtProbe
-nssm status HumboldtProbe
+nssm status  HumboldtProbe
 ```
 
 NSSM automatically restarts the probe on crash and starts it on boot.
