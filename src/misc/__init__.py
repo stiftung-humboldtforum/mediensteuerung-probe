@@ -52,5 +52,10 @@ def make_response(
     return json.dumps(response)
 
 
-def error_response(status):
+def status_response(status):
+    """Wrap a status dict (e.g. {'display': 'ok', 'easire': 'error'})
+    in the standard probe-response envelope. Despite the per-key 'error'
+    values it carries, the envelope is data-keyed (not error-keyed) —
+    the dict is informational status, not a transport-layer error.
+    """
     return make_response(data={'status': 'complete', 'result': status})

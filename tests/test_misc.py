@@ -1,5 +1,5 @@
 import json
-from misc import parse_payload, make_response, error_response, get_config
+from misc import parse_payload, make_response, status_response, get_config
 
 
 def test_parse_payload_valid():
@@ -81,8 +81,8 @@ def test_make_response_both():
     assert 'error' in result
 
 
-def test_error_response():
-    result = json.loads(error_response({'display': 'ok', 'easire': 'error'}))
+def test_status_response():
+    result = json.loads(status_response({'display': 'ok', 'easire': 'error'}))
     assert result['data']['status'] == 'complete'
     assert result['data']['result']['display'] == 'ok'
     assert result['data']['result']['easire'] == 'error'

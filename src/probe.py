@@ -4,7 +4,7 @@ from threading import Event, Thread
 from paho.mqtt.client import Client, SubscribeOptions, MQTTMessage
 
 
-from misc import error_response, logger, parse_payload, make_response
+from misc import status_response, logger, parse_payload, make_response
 import methods
 from methods import call_method, SENSORS, COMMANDS
 
@@ -137,7 +137,7 @@ class Probe(Thread):
                     self.client.publish(f'probe/{self.fqdn}/{name}', call_method(method))
             except Exception:
                 logger.exception(name)
-        self.client.publish(f'probe/{self.fqdn}/errors', error_response(self.errors))
+        self.client.publish(f'probe/{self.fqdn}/errors', status_response(self.errors))
 
     def run(self):
         self._running = True
