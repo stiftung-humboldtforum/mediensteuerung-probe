@@ -143,6 +143,26 @@ def test_on_message_unknown_method():
     assert response['error']['message'] == 'Unknown method'
 
 
+def test_on_message_malformed_topic_short():
+    probe = _make_probe()
+    client = Mock()
+    msg = Mock()
+    msg.topic = 'manager/test.local'
+    msg.payload = b''
+    probe.on_message(client, None, msg)
+    assert client.publish.call_count == 0
+
+
+def test_on_message_malformed_topic_empty_method():
+    probe = _make_probe()
+    client = Mock()
+    msg = Mock()
+    msg.topic = 'manager/test.local/'
+    msg.payload = b''
+    probe.on_message(client, None, msg)
+    assert client.publish.call_count == 0
+
+
 def test_on_message_module_attribute_blocked():
     probe = _make_probe(capabilities='os,subprocess,call_method')
     client = Mock()

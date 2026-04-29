@@ -110,7 +110,11 @@ class Probe(Thread):
         self.is_connected = False
 
     def on_message(self, client: Client, userdata, msg: MQTTMessage):
-        method_name = msg.topic.split('/')[2]
+        parts = msg.topic.split('/')
+        if len(parts) < 3 or not parts[2]:
+            logger.warning('Ignoring malformed topic: %s', msg.topic)
+            return
+        method_name = parts[2]
         logger.info('Received method %s', method_name)
         if method_name not in self._allowed_methods:
             response = make_response(error=dict(message='Method not allowed'))
