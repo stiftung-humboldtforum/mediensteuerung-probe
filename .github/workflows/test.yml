@@ -47,10 +47,19 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements-dev.txt
 
-      - name: Run tests
-        # testpaths/addopts/pythonpath kommen aus pyproject.toml
-        run: pytest
+      - name: Run tests with coverage
+        # testpaths/addopts/pythonpath kommen aus pyproject.toml,
+        # ebenso die [tool.coverage.*] Konfiguration.
+        run: pytest --cov --cov-report=term-missing --cov-report=xml
 
       - name: Verify clean import (no DeprecationWarnings)
         run: |
           PYTHONPATH=src python -W error::DeprecationWarning -c "import app, probe, methods; print('imports clean')"
+
+      - name: Upload coverage artifact
+        if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.13'
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-xml
+          path: coverage.xml
+          retention-days: 30

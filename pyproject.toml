@@ -44,6 +44,7 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
     "pytest>=8.0.0,<10.0.0",
+    "pytest-cov>=5.0.0,<7.0.0",
     "pip-tools>=7.0.0,<8.0.0",  # for re-generating requirements.lock.txt
 ]
 
@@ -59,3 +60,22 @@ addopts = "-v"
 filterwarnings = [
     "error::DeprecationWarning",
 ]
+
+[tool.coverage.run]
+source = ["src"]
+branch = true
+omit = [
+    # Plattform-Module die auf macOS-CI nie ausgefuehrt werden — fuer
+    # ehrliche Coverage-Zahlen rauslassen, sonst sieht's aus als waere
+    # die Linux-Codebase 0% covered wenn macOS-CI laeuft.
+    "src/methods/_win32.py",
+]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+]
+show_missing = true
+skip_covered = false
