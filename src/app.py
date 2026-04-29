@@ -49,6 +49,16 @@ class App:
         self.mqtt_client = mqtt.Client(client_id=self.fqdn)
         self.mqtt_client.enable_logger(logger)
 
+        # Last Will: when the probe drops unexpectedly the broker
+        # publishes this to inform the manager. retained so newly
+        # subscribing managers see the current state.
+        self.mqtt_client.will_set(
+            f'probe/{self.fqdn}/connected',
+            payload='0',
+            qos=1,
+            retain=True,
+        )
+
         if not self.no_tls:
             logger.info('MQTT TLS: %s %s %s', self.ca_certificate, self.certfile, self.keyfile)
             self.mqtt_client.tls_set(

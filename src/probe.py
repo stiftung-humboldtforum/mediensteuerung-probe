@@ -109,9 +109,11 @@ class Probe(Thread):
     def on_connect(self, client: Client, *args):
         logger.info('Connected %s', args)
         self.is_connected = True
-        client.publish(f'probe/{self.fqdn}/connected')
-        self.client.publish(f'probe/{self.fqdn}/capabilities', self.capabilities)
-        self.client.publish(f'probe/{self.fqdn}/boot_time', call_method(methods.boot_time))
+        # retain=True so newly subscribing managers see "alive" without
+        # waiting for the next sensor cycle.
+        client.publish(f'probe/{self.fqdn}/connected', payload='1', qos=1, retain=True)
+        self.client.publish(f'probe/{self.fqdn}/capabilities', self.capabilities, qos=1, retain=True)
+        self.client.publish(f'probe/{self.fqdn}/boot_time', call_method(methods.boot_time), qos=1, retain=True)
         client.subscribe(
             f'manager/{self.fqdn}/#',
             options=SubscribeOptions(noLocal=True)
@@ -143,4 +145,4 @@ class Probe(Thread):
             args, kwargs = parse_payload(msg.payload)
             response = call_method(method, *args, **kwargs)
         logger.debug(response)
-        client.publish(f'probe/{self.fqdn}/{method_name}', response)
+        client.publish(f'probe/{self.fqdn}/{method_name}', response, qos=1)
