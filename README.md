@@ -133,6 +133,23 @@ pip install pip-tools
 pip-compile --strip-extras --output-file=requirements.lock.txt requirements.txt
 ```
 
+### Project layout / `pyproject.toml`
+
+`pyproject.toml` carries project metadata (name, version,
+`requires-python>=3.9`) and tool configuration (pytest paths, treat
+`DeprecationWarning` as errors). It is **not** a build-system manifest
+— the probe is deployed via `pip install -r requirements*.txt`, not
+as a wheel. So:
+
+- Source-of-truth for **install** is `requirements.txt` /
+  `requirements.lock.txt`.
+- Source-of-truth for **dev tooling** (pytest discovery, sys.path)
+  is `pyproject.toml`.
+
+Running `pytest` from the repo root works without arguments because
+`pyproject.toml` already declares `pythonpath = ["src"]` and
+`testpaths = ["tests"]`.
+
 ## Usage
 
 ```bash
