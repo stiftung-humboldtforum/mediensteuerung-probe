@@ -46,7 +46,7 @@ The probe uses two topic prefixes:
 
 ### Linux
 
-- Python 3.x
+- Python 3.9+ (uses PEP 585 generic syntax `dict[str, Any]`)
 - Network access to the MQTT broker
 - wpctl (PipeWire/WirePlumber) for audio control
 - xrandr for display info
@@ -55,7 +55,7 @@ The probe uses two topic prefixes:
 
 - Python 3.13+ (system-wide installation, not Windows Store)
 - Network access to the MQTT broker
-- LibreHardwareMonitorLib.dll + HidSharp.dll in `lib/win32/` (included)
+- LibreHardwareMonitorLib.dll + HidSharp.dll in `lib/win32/` (committed in repo)
 - NSSM for running as a service
 
 ## Installation
