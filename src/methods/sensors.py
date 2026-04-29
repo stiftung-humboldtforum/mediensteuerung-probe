@@ -83,7 +83,7 @@ def uptime():
         return time.time() - psutil.boot_time()
 
 def mpv_file_pos_sec():
-    p = subprocess.run('mpv_control file_pos_sec', stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=True)
+    p = subprocess.run(['mpv_control', 'file_pos_sec'], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     if p.returncode == 0:
         return int(p.stdout.strip().decode())
     return None
@@ -91,7 +91,7 @@ def mpv_file_pos_sec():
 
 def display():
     if platform.system() == 'Linux':
-        p = subprocess.run('xrandr --current', env={**os.environ, 'DISPLAY': ':0'}, stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=True)
+        p = subprocess.run(['xrandr', '--current'], env={**os.environ, 'DISPLAY': ':0'}, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         if p.returncode == 0:
             mode = [line for line in p.stdout.decode().splitlines() if '*' in line]
             if len(mode) > 0:
@@ -139,17 +139,14 @@ def display():
 
 
 def easire():
-    if platform.system() == 'Linux':
-        p = subprocess.run('ps ax | grep -q [e]asire-player', stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=True)
-        if p.returncode == 0:
-            return True
-    elif platform.system() == 'Windows':
-        for proc in psutil.process_iter(['name', 'cmdline']):
-            try:
-                if 'easire-player' in (proc.info['name'] or ''):
-                    return True
-                if any('easire-player' in arg for arg in (proc.info['cmdline'] or [])):
-                    return True
-            except (psutil.NoSuchProcess, psutil.AccessDenied):
-                pass
+    if platform.system() not in ('Linux', 'Windows'):
+        return None
+    for proc in psutil.process_iter(['name', 'cmdline']):
+        try:
+            if 'easire-player' in (proc.info['name'] or ''):
+                return True
+            if any('easire-player' in arg for arg in (proc.info['cmdline'] or [])):
+                return True
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            pass
     return None

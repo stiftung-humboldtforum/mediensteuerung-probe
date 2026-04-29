@@ -1,4 +1,3 @@
-import os
 import platform
 import subprocess
 
@@ -27,23 +26,25 @@ def call_method(method, *args, **kwargs):
 
 def shutdown():
     if platform.system() == 'Linux':
-        result = os.system('sudo shutdown now')
+        cmd = ['sudo', 'shutdown', 'now']
     elif platform.system() == 'Windows':
-        result = os.system('shutdown /s /t 0')
+        cmd = ['shutdown', '/s', '/t', '0']
     else:
         raise NotImplementedError(f'shutdown not supported on {platform.system()}')
-    if result != 0:
-        raise Exception(result)
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    if result.returncode != 0:
+        raise RuntimeError(f'shutdown failed (rc={result.returncode}): {result.stderr.strip()}')
 
 def reboot():
     if platform.system() == 'Linux':
-        result = os.system('sudo reboot now')
+        cmd = ['sudo', 'reboot', 'now']
     elif platform.system() == 'Windows':
-        result = os.system('shutdown /r /t 0')
+        cmd = ['shutdown', '/r', '/t', '0']
     else:
         raise NotImplementedError(f'reboot not supported on {platform.system()}')
-    if result != 0:
-        raise Exception(result)
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    if result.returncode != 0:
+        raise RuntimeError(f'reboot failed (rc={result.returncode}): {result.stderr.strip()}')
 
 def ping():
     return
