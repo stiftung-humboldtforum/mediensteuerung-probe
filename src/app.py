@@ -159,6 +159,13 @@ class App:
 
                 last_heartbeat = self.probe.heartbeat
                 stalled_cycles = 0
+                # Toleranz fuer initialen Race: Probe-Thread startet
+                # seinen 5s-wait beim probe.start() (vor Connect), darum
+                # kann der erste call_methods()-Cycle bis zu 5s nach
+                # connected_event verzoegert sein. Wir tolerieren
+                # STALL_TOLERANCE Cycles ohne Warning, damit der
+                # Watchdog beim Startup nicht falsch-positiv anschlaegt.
+                STALL_TOLERANCE = 2
                 while self.probe.is_connected:
                     time.sleep(5)
                     current_heartbeat = self.probe.heartbeat
@@ -169,7 +176,8 @@ class App:
                             self.notify.notify()
                     else:
                         stalled_cycles += 1
-                        logger.warning('Probe heartbeat stalled (%d cycles); withholding sd_notify watchdog ping', stalled_cycles)
+                        if stalled_cycles > STALL_TOLERANCE:
+                            logger.warning('Probe heartbeat stalled (%d cycles); withholding sd_notify watchdog ping', stalled_cycles)
 
                 logger.debug('Probe is not connected')
             except Exception as e:
