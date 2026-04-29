@@ -8,14 +8,27 @@ logger = logging.getLogger()
 
 def get_config(config_file: str) -> dict:
     """Parse a userconfig.txt with shell-style KEY="value" lines into
-    a dict. Errors (file missing, parse error) yield an empty dict —
-    Probe.__init__ falls back to defaults / fail-closed values."""
+    a dict. Lines starting with '#' (after optional whitespace) are
+    treated as comments and skipped. Errors (file missing, parse
+    error) yield an empty dict — Probe.__init__ falls back to defaults
+    / fail-closed values."""
     config = {}
     try:
         with open(config_file) as f:
-            for line in shlex.split(f.read()):
-                var, _, value = line.partition('=')
-                config[var] = value
+            content = f.read()
+        # Strip comment lines BEFORE shlex.split, sonst zerlegt shlex
+        # '# Periodische Sensor-Polls' in 6 nutzlose Tokens die als
+        # garbage-Keys im Config-Dict landen.
+        cleaned = '\n'.join(
+            line for line in content.splitlines()
+            if line.strip() and not line.lstrip().startswith('#')
+        )
+        for token in shlex.split(cleaned):
+            var, sep, value = token.partition('=')
+            if not sep:
+                logger.warning('Ignoring config token without "=": %r', token)
+                continue
+            config[var] = value
     except Exception as e:
         logger.error('Loading config %s', e)
     return config

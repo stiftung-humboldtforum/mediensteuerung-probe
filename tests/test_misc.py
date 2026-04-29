@@ -106,3 +106,26 @@ def test_get_config_empty_file(tmp_path):
     config_file.write_text('')
     config = get_config(str(config_file))
     assert config == {}
+
+
+def test_get_config_skips_comments(tmp_path):
+    """userconfig.example.txt commit (R4) hatte Kommentar-Zeilen
+    eingefuehrt — vorher zerlegte shlex die in nutzlose Tokens."""
+    config_file = tmp_path / 'with_comments.txt'
+    config_file.write_text(
+        '# Header comment\n'
+        '#   Indented comment\n'
+        'PROBE_METHODS="ping,uptime"\n'
+        '\n'
+        '# Another comment\n'
+        'PROBE_CAPABILITIES="reboot"\n'
+    )
+    config = get_config(str(config_file))
+    assert config == {'PROBE_METHODS': 'ping,uptime', 'PROBE_CAPABILITIES': 'reboot'}
+
+
+def test_get_config_token_without_equals_ignored(tmp_path):
+    config_file = tmp_path / 'malformed.txt'
+    config_file.write_text('VALID="ok"\nstray_token_no_equals\n')
+    config = get_config(str(config_file))
+    assert config == {'VALID': 'ok'}
