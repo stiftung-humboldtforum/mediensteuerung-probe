@@ -20,15 +20,15 @@ def reboot():
 
 
 def is_muted():
-    return 'MUTED' in subprocess.check_output(['wpctl', 'get-volume', '@DEFAULT_AUDIO_SINK@']).decode()
+    return 'MUTED' in subprocess.check_output(['wpctl', 'get-volume', '@DEFAULT_AUDIO_SINK@'], timeout=3).decode()
 
 
 def mute():
-    subprocess.run(['wpctl', 'set-mute', '@DEFAULT_AUDIO_SINK@', '1'])
+    subprocess.run(['wpctl', 'set-mute', '@DEFAULT_AUDIO_SINK@', '1'], timeout=3)
 
 
 def unmute():
-    subprocess.run(['wpctl', 'set-mute', '@DEFAULT_AUDIO_SINK@', '0'])
+    subprocess.run(['wpctl', 'set-mute', '@DEFAULT_AUDIO_SINK@', '0'], timeout=3)
 
 
 def temperatures():
@@ -52,6 +52,7 @@ def display():
         env={**os.environ, 'DISPLAY': ':0'},
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
+        timeout=5,
     )
     if p.returncode != 0:
         return None

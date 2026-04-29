@@ -49,7 +49,12 @@ def boot_time():
 
 
 def mpv_file_pos_sec():
-    p = subprocess.run(['mpv_control', 'file_pos_sec'], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    p = subprocess.run(
+        ['mpv_control', 'file_pos_sec'],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        timeout=3,
+    )
     if p.returncode == 0:
         return int(p.stdout.strip().decode())
     return None
