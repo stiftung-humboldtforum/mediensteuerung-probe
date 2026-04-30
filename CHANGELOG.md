@@ -10,7 +10,63 @@ For the historical migration from `avorus-probe` see
 
 ## [Unreleased]
 
-### Added
+### Added (Test-Vertiefung — gefunden im "fokus testing" Review)
+- **TLS-Integration-Test** (L-T3) — der Production-Pfad mit
+  `--ca_certificate / --certfile / --keyfile` ist jetzt automatisiert
+  getestet. `tests/_certs.py` erzeugt ephemere CA + Server + Client-
+  Zertifikate, `tls_broker`-Fixture startet einen separaten Mosquitto
+  mit `require_certificate=true` (mTLS). Vorher 0% getestet, jetzt
+  100% des TLS-Connect-Codepaths.
+- **Reconnect-Backoff-Integration-Test** (L-T4) — verifiziert
+  exponentielle Progression der Reconnect-Wartezeiten direkt aus den
+  App-Logs.
+- **Whitelist-Gate-Integration-Test** (L-T2 echt) — `probe_config`-
+  Marker erlaubt Tests mit eigenen Capabilities. Erster Test der
+  beweist dass die COMMANDS-Whitelist (S1) als zweite Verteidigungs-
+  linie greift, wenn die Capability-Gate (S4) durchlässt.
+- **`_win32.py` Mock-Tests** (L-T12) — 11 Tests die pycaw, pythonnet/
+  LHM und Win32 EnumDisplaySettingsW mocken. Coverage 0% → 93% ohne
+  echte Windows-Hardware.
+- **`_linux.display`-Parser Mock-Tests** (L-T11) — 4 Tests mit
+  realistischen xrandr-Outputs (1080p/60Hz, 1440p/144Hz, no-active-
+  mode, xrandr-Fail).
+- **notify-Sequence-Tests** (L-T5) — 4 Tests verifizieren
+  `sd_notify`-Calls in App.run (Setup-Fail, exception-detail in
+  status, notify-disabled, notify=None).
+- **shell-lint CI-Job** (L-T7) — `shellcheck` für `*.sh`,
+  `PSScriptAnalyzer` für `*.ps1`. Fängt Syntax-Fehler in
+  Hardware-Test- und Install-Skripten in CI.
+- **pre-commit CI-Job** (CI2) — läuft `pre-commit run --all-files`,
+  fängt Stilfehler ohne lokales `pre-commit install`.
+- **macOS-Integration-Slot** (CI1) — Integration-Tests auch auf
+  macOS via `brew install mosquitto`.
+- **`scripts/mpv_control.example.sh`** (O2) — Reference impl des
+  externen mpv_control-Tools das die `mpv_file_pos_sec`-Sensor
+  voraussetzt.
+
+### Changed (Test-Infrastruktur)
+- **Subprocess-Coverage** (L-T1) — `tests/sitecustomize.py` +
+  `[tool.coverage.run] parallel=true` lassen den Probe-Subprocess in
+  Integration-Tests jetzt zur Coverage beitragen. `app.py` 48% → 73%,
+  Total 71% → **85%**.
+- **`mqtt_subscriber` event-driven** (C6) — `min_count`-Parameter,
+  retained-Tests von ~2s blocking auf <100ms beschleunigt.
+- **MQTT-Keepalive konfigurierbar** (L-T9) — `PROBE_MQTT_KEEPALIVE`
+  env-var. Tests setzen 5s, Last-Will-Test in 12s statt 23s.
+- **xdist-Port-Suffix** (C2) — pro pytest-xdist-worker ein eigener
+  Port, vermeidet Konflikt bei parallelen Test-Runs.
+- **Coverage nur in 1 CI-Slot** (CI4) — andere Matrix-Slots laufen
+  `pytest` ohne `--cov`, ~30s schneller pro Slot.
+- **`_win32.py` aus Coverage-omit raus** — durch L-T12 jetzt echt
+  testbar.
+- **`signal.SIGKILL` durch `proc.kill()` ersetzt** (C3) — plattform-
+  portabel (POSIX SIGKILL, Windows TerminateProcess).
+- **Setup-Failure setzt notify.status** — vorher kein Status-Update
+  im Setup-Fail-Pfad, der Operator wusste nicht woran's lag.
+- **`--no_tls` setzt notify-Status auf `'UNSAFE: --no_tls active'`**
+  (S-R1) — sichtbar in `systemctl status`.
+
+### Added (vorherige Welle)
 - **Auto-Broker fixture**: `tests/conftest.py:pytest_configure` startet
   bei `pytest -m integration` automatisch einen ephemeren Mosquitto in
   einem Subprocess wenn keiner erreichbar ist und `mosquitto` auf
