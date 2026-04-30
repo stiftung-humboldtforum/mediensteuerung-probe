@@ -112,8 +112,19 @@ pip install -r requirements.txt
 
 ```bash
 pip install -r requirements-dev.txt
-pytest
+pytest                        # 72 Unit + 8 Integration (Auto-Broker)
+pytest -m integration         # nur Integration gegen Auto-Broker
 ```
+
+For Linux-codepath verification on a macOS dev machine, use Docker:
+
+```bash
+docker compose -f docker-compose.linux-test.yml run --rm probe-test
+```
+
+See [`docs/testing.md`](docs/testing.md) for the full testing
+strategy, including hardware-smoke-tests, VM setup for Windows
+verification, and CI matrix.
 
 ### Reproducible builds (`pip-compile`)
 

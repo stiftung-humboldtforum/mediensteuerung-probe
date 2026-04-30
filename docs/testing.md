@@ -467,6 +467,88 @@ hängt die Test-Suite wenn ein Thread nicht terminiert. Verwende
 
 ---
 
+## 10. Plattform-Verifikation auf macOS-Dev
+
+Die Probe läuft in Production nur auf Linux + Windows. macOS ist
+Thomas' Dev-Environment — `methods/_stub.py` greift, alle Hardware-
+Funktionen sind no-op. Tests gegen echte Linux/Windows-Code-Pfade
+brauchen entweder Docker (Linux) oder eine VM (Windows).
+
+### 10a. Linux-Tests via Docker
+
+`Dockerfile.linux-test` + `docker-compose.linux-test.yml` bauen ein
+Linux-Container-Image mit Python 3.13, mosquitto und allen dev-deps.
+Der Auto-Broker-Mechanismus + Integration-Tests funktionieren
+identisch zur Linux-CI.
+
+```bash
+# Einmalig: Container bauen (~30s)
+docker compose -f docker-compose.linux-test.yml build
+
+# Volle Test-Suite gegen Linux-Python
+docker compose -f docker-compose.linux-test.yml run --rm probe-test
+
+# Nur Integration-Tests
+docker compose -f docker-compose.linux-test.yml run --rm probe-test \
+  pytest -m integration
+
+# Interaktive Shell zum Debuggen
+docker compose -f docker-compose.linux-test.yml run --rm probe-test bash
+```
+
+**Was Docker abdeckt:**
+- Probe-Code auf echtem Linux-Python (nicht macOS-_stub-Pfad)
+- `methods/_linux.py` Import-Sanity
+- paho-mqtt v2 + Auto-Broker auf Linux
+- 102 Tests, gleiche Schema wie CI
+
+**Was Docker NICHT abdeckt:** PipeWire, X11, Hardware-Sensoren,
+LibreHardwareMonitor (Windows). Dafür braucht's eine VM oder
+echte Hardware.
+
+### 10b. Linux mit Hardware via VM
+
+Für die `wpctl`/`xrandr`/`psutil-sensors`-Pfade ist eine echte
+Desktop-Linux-VM nötig:
+
+- **UTM** auf Apple Silicon (kostenlos, nutzt Apple Hypervisor):
+  https://mac.getutm.app — Ubuntu Desktop Image laden, normales Setup
+- Im Linux-Gast: `apt install pipewire wireplumber wpctl xrandr python3-pip mosquitto`
+- Repo per `git clone` ins Gast oder via shared folder
+- `bash scripts/hardware-test-linux.sh` läuft jetzt mit echtem PipeWire
+
+### 10c. Windows-Tests via VM
+
+Für `pycaw`/`LibreHardwareMonitor`/`shutdown.exe`/Win32-API gibt's
+keinen Container-Weg — Windows muss als Gast-OS laufen:
+
+- **UTM** kann Windows ARM (auf Apple Silicon)
+- **Parallels Desktop** (kommerziell, aber mit besserer Hardware-Pass-
+  Through für Audio-Tests)
+- Im Windows-Gast: `winget install Python.Python.3.13`, dann Repo
+  klonen, `pip install -r requirements-dev.txt`
+- `python -m pytest` läuft die Unit-Tests
+- `pwsh scripts\hardware-test-windows.ps1` testet pycaw + LHM (als
+  Admin starten für vollständige LHM-Sensoren!)
+
+### 10d. Lokaler MQTT-Manager-Stand-In
+
+Wenn du gegen einen lokalen Manager testen willst (statt nur Auto-
+Broker), gibt's drei Optionen:
+
+```bash
+# 1. brew (macOS-Host) — Bind auf alle Interfaces damit VMs auch ran
+mosquitto -p 1883 -v &
+
+# 2. Docker (eigene Compose) — port 1883 forwarded
+docker run --rm -p 1883:1883 eclipse-mosquitto:2
+
+# 3. Bestehender Stiftungs-Manager — nur Hostname/Port + Certs setzen
+PROBE_TEST_BROKER=mqtt.intern PROBE_TEST_PORT=8883 pytest -m integration
+```
+
+---
+
 ## TL;DR Cheat Sheet
 
 ```bash

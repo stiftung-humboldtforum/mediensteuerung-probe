@@ -1,0 +1,50 @@
+# Linux test environment for the Humboldt-Probe.
+#
+# Use case: a macOS-Dev wants to verify the Linux _linux.py codepath
+# without spinning up a VM. This image has Python 3.13, mosquitto on
+# PATH (so the auto-broker fixture works), and all dev-dependencies
+# installed.
+#
+# Limitations: NO PipeWire / wpctl daemon, NO X-server / xrandr — so
+# the wpctl/xrandr-using sensor functions still hit the same "command
+# not found / no display" errors as macOS would. For real hardware
+# verification you need a Linux VM with PipeWire + X11.
+#
+# What this image DOES verify:
+#   - Unit tests pass on real Linux Python 3.13
+#   - methods._linux.py imports cleanly under Linux
+#   - Integration tests pass against a real Linux mosquitto
+#   - paho-mqtt 2.x callbacks fire correctly under Linux
+#
+# Build:  docker build -f Dockerfile.linux-test -t humboldt-probe-test .
+# Run:    docker run --rm -v "$PWD:/repo" humboldt-probe-test pytest
+#         docker run --rm -v "$PWD:/repo" humboldt-probe-test pytest -m integration
+#
+# Compose: see docker-compose.linux-test.yml for a friendlier wrapper.
+
+FROM python:3.13-slim
+
+# mosquitto = for the auto-broker fixture
+# mosquitto-clients = for manual mosquitto_sub/pub debugging inside container
+# git = some setuptools paths still need it during install
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+       mosquitto \
+       mosquitto-clients \
+       git \
+    && rm -rf /var/lib/apt/lists/* \
+    && systemctl disable mosquitto 2>/dev/null || true
+
+WORKDIR /repo
+
+# Install Python deps based on the lock file (reproducible). Layer is
+# cached as long as requirements-dev.txt + requirements.txt don't change.
+COPY requirements-dev.txt requirements.txt ./
+RUN pip install --no-cache-dir --upgrade pip \
+    && pip install --no-cache-dir -r requirements-dev.txt
+
+# Default = run the full test suite. Override with any pytest invocation:
+#   docker run ... pytest -m integration
+#   docker run ... bash
+ENTRYPOINT []
+CMD ["pytest"]
