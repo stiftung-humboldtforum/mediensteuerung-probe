@@ -28,6 +28,7 @@ import sys
 import tempfile
 import time
 from pathlib import Path
+from typing import Optional
 
 import paho.mqtt.client as mqtt
 import pytest
@@ -38,8 +39,11 @@ BROKER_PORT = int(os.environ.get('PROBE_TEST_PORT', '11883'))
 SRC_DIR = Path(__file__).parent.parent / 'src'
 
 # Set in pytest_configure if we spawned our own broker; cleaned up in
-# pytest_unconfigure.
-_AUTO_BROKER: dict | None = None
+# pytest_unconfigure. Optional[dict] statt 'dict | None' weil das
+# PEP-604-Form auf Python 3.9 als Type-Annotation am Modul-Level einen
+# TypeError wirft (3.9 unterstuetzt es nur in Funktions-Bodies oder
+# mit 'from __future__ import annotations').
+_AUTO_BROKER: Optional[dict] = None
 
 
 def _broker_reachable(host: str, port: int, timeout: float = 1.0) -> bool:

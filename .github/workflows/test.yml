@@ -68,6 +68,10 @@ jobs:
         run: pytest --cov --cov-report=term-missing --cov-report=xml
 
       - name: Verify clean import (no DeprecationWarnings)
+        # 'shell: bash' macht den step plattform-uebergreifend laufbar
+        # (Windows-Runner haben Git Bash; Default-Shell dort ist
+        # PowerShell, das 'PYTHONPATH=src python ...' nicht versteht).
+        shell: bash
         run: |
           PYTHONPATH=src python -W error::DeprecationWarning -c "import app, probe, methods; print('imports clean')"
 
