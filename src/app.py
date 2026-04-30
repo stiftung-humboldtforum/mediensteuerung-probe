@@ -268,7 +268,12 @@ def main(
         notify = None
 
     if notify is not None and notify.enabled():
-        notify.status('Startup...')
+        if no_tls:
+            # Operator-sichtbarer Status: kein TLS aktiv. systemctl
+            # status zeigt das prominent neben dem laeufenden-marker.
+            notify.status('UNSAFE: --no_tls active (no encryption, no auth)')
+        else:
+            notify.status('Startup...')
 
     config = get_config(config_file)
     logger.info('Config: %s', config)

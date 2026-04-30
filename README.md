@@ -209,10 +209,13 @@ PROBE_CAPABILITIES="wake,shutdown,reboot,mute,unmute"
 this repo and not published as a pip package. If you don't run mpv as
 the kiosk player, you can omit `mpv_file_pos_sec` from `PROBE_METHODS`.
 
-A typical implementation is a small shell script around `socat` or
-`echo | nc -U /tmp/mpvsocket` that issues `{"command":["get_property","time-pos"]}`
-and prints the integer seconds. See e.g.
-<https://github.com/mpv-player/mpv/blob/master/DOCS/man/ipc.rst>.
+A reference implementation is at
+[`scripts/mpv_control.example.sh`](scripts/mpv_control.example.sh) —
+copy to `/usr/local/bin/mpv_control` and make executable. It uses
+`socat` to talk to mpv's IPC socket (`--input-ipc-server=/tmp/mpvsocket`)
+and prints the integer seconds.
+
+See also <https://github.com/mpv-player/mpv/blob/master/DOCS/man/ipc.rst>.
 
 ### Available PROBE_CAPABILITIES
 

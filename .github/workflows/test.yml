@@ -8,6 +8,40 @@ on:
   workflow_dispatch:
 
 jobs:
+  pre-commit:
+    name: pre-commit (lint + style)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Run pre-commit hooks
+        # Faengt Stilfehler ab (whitespace, EOL, YAML/TOML-syntax,
+        # ruff-Lite-Linting) — verhindert dass jemand ohne lokales
+        # 'pre-commit install' das Repo verschmutzt.
+        uses: pre-commit/action@v3.0.1
+
+  shell-lint:
+    name: shellcheck + PSScriptAnalyzer
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: shellcheck (sh + bash scripts)
+        uses: ludeeus/action-shellcheck@2.0.0
+        with:
+          scandir: scripts
+      - name: PSScriptAnalyzer (PowerShell scripts)
+        shell: pwsh
+        run: |
+          Install-Module -Name PSScriptAnalyzer -Force -Scope CurrentUser -SkipPublisherCheck
+          $issues = Invoke-ScriptAnalyzer -Path scripts/ -Recurse -Severity Error,Warning
+          if ($issues) {
+            $issues | Format-Table -AutoSize
+            Write-Error "PSScriptAnalyzer found $($issues.Count) issue(s)"
+            exit 1
+          }
+
   pytest:
     name: pytest (Python ${{ matrix.python-version }} on ${{ matrix.os }})
     runs-on: ${{ matrix.os }}
@@ -62,9 +96,16 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements-dev.txt
 
+      - name: Run tests
+        # Coverage nur auf einem Slot (ubuntu/3.13) — sonst wird
+        # CI-Zeit pro Matrix-Eintrag verschwendet ohne dass die
+        # Coverage-Zahl sich aendert. testpaths/addopts/pythonpath
+        # kommen aus pyproject.toml.
+        if: ${{ !(matrix.os == 'ubuntu-latest' && matrix.python-version == '3.13') }}
+        run: pytest
+
       - name: Run tests with coverage
-        # testpaths/addopts/pythonpath kommen aus pyproject.toml,
-        # ebenso die [tool.coverage.*] Konfiguration.
+        if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.13'
         run: pytest --cov --cov-report=term-missing --cov-report=xml
 
       - name: Verify clean import (no DeprecationWarnings)
@@ -84,10 +125,14 @@ jobs:
           retention-days: 30
 
   integration:
-    name: integration tests (real Mosquitto)
-    runs-on: ubuntu-latest
+    name: integration tests (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
     needs: pytest
     timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
 
     steps:
       - uses: actions/checkout@v4
@@ -101,16 +146,22 @@ jobs:
             requirements.txt
             requirements-dev.txt
 
-      - name: Install Mosquitto on PATH
+      - name: Install Mosquitto (Linux)
+        if: matrix.os == 'ubuntu-latest'
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq mosquitto mosquitto-clients
-          # The default systemd-managed instance is irrelevant — the
-          # auto-broker fixture (tests/conftest.py) spawns its own
-          # mosquitto on PROBE_TEST_PORT. We just need the binary on
-          # $PATH.
+          # Disable any system-wide mosquitto so it doesn't bind ports
+          # we want to use. Auto-broker fixture spawns its own.
           sudo systemctl stop mosquitto || true
           sudo systemctl disable mosquitto || true
+
+      - name: Install Mosquitto (macOS)
+        if: matrix.os == 'macos-latest'
+        run: |
+          brew install mosquitto
+          # GHA macOS-Runner hat keinen system-wide mosquitto laufen,
+          # kein extra cleanup nötig.
 
       - name: Install Python dependencies
         run: |
