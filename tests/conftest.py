@@ -21,7 +21,6 @@ Manual override paths (still supported):
 """
 import os
 import shutil
-import signal
 import socket
 import subprocess
 import sys
@@ -167,25 +166,34 @@ def pytest_collection_modifyitems(config, items):
 
 @pytest.fixture
 def mqtt_subscriber():
-    """Returns a function `subscribe(topic, timeout=10) -> list[(topic, payload)]`
-    that records all messages on the topic-pattern until timeout, then disconnects.
+    """Returns a function `subscribe(topic, timeout=10, min_count=0) -> list[Message]`
+    that records all messages on the topic-pattern.
+
+    - If min_count > 0: returns as soon as min_count messages have been
+      collected (or timeout, whichever comes first).
+    - If min_count == 0: collects for the full timeout (back-compat).
 
     Used like:
-        msgs = subscribe('probe/#', timeout=8)
-        assert any(m.topic.endswith('/connected') and m.payload == b'1' for m in msgs)
+        msgs = subscribe('probe/+/connected', timeout=5, min_count=1)
+        assert msgs[0].payload == b'1'
     """
+    from threading import Event
     clients = []
 
-    def _subscribe(topic_pattern: str, timeout: float = 10.0) -> list:
+    def _subscribe(topic_pattern: str, timeout: float = 10.0,
+                   min_count: int = 0) -> list:
         messages: list = []
-        ready = []
+        ready = Event()
+        enough = Event()
 
         def on_connect(client, userdata, flags, reason_code, properties=None):
             client.subscribe(topic_pattern)
-            ready.append(True)
+            ready.set()
 
         def on_message(client, userdata, msg):
             messages.append(msg)
+            if min_count and len(messages) >= min_count:
+                enough.set()
 
         client = mqtt.Client(
             callback_api_version=mqtt.CallbackAPIVersion.VERSION2,
@@ -199,11 +207,13 @@ def mqtt_subscriber():
 
         # Warte auf den Subscribe-Handshake bevor wir die Timeout-Uhr
         # starten — sonst würden frühe retained messages verpasst.
-        deadline = time.monotonic() + 5
-        while not ready and time.monotonic() < deadline:
-            time.sleep(0.05)
+        if not ready.wait(timeout=5):
+            raise TimeoutError('subscribe handshake never completed')
 
-        time.sleep(timeout)
+        if min_count:
+            enough.wait(timeout=timeout)  # event-driven: returns ASAP
+        else:
+            time.sleep(timeout)  # back-compat: collect-for-timeout
         return list(messages)
 
     yield _subscribe
@@ -238,16 +248,31 @@ def mqtt_publisher():
 # --- Probe subprocess fixture ---------------------------------------------
 
 @pytest.fixture
-def running_probe(tmp_path):
+def running_probe(request, tmp_path):
     """Start the actual Probe-app as a subprocess against the broker.
-    Yields a context with `proc` (Popen) and `fqdn` (string).
+    Yields the Popen process.
 
-    Caller can read proc.stdout/.stderr for log assertions.
+    Tests can override PROBE_METHODS / PROBE_CAPABILITIES via
+    @pytest.mark.probe_config(methods=..., capabilities=...).
+
+    Example:
+        @pytest.mark.probe_config(capabilities='os,subprocess,call_method')
+        def test_whitelist_gate(running_probe, ...):
+            # 'os' is in capabilities → Capability-Gate lets it through,
+            # but COMMANDS-Whitelist rejects it as 'Unknown method'
     """
+    marker = request.node.get_closest_marker('probe_config')
+    if marker:
+        methods_csv = marker.kwargs.get('methods', 'ping,uptime,boot_time,easire')
+        caps_csv = marker.kwargs.get('capabilities', 'ping,reboot,mute,unmute')
+    else:
+        methods_csv = 'ping,uptime,boot_time,easire'
+        caps_csv = 'ping,reboot,mute,unmute'
+
     config_file = tmp_path / 'userconfig.txt'
     config_file.write_text(
-        'PROBE_METHODS="ping,uptime,boot_time,easire"\n'
-        'PROBE_CAPABILITIES="ping,reboot,mute,unmute"\n'
+        f'PROBE_METHODS="{methods_csv}"\n'
+        f'PROBE_CAPABILITIES="{caps_csv}"\n'
     )
 
     # Eindeutiger client_id pro Test damit parallele Runs nicht
@@ -258,6 +283,9 @@ def running_probe(tmp_path):
     env = {
         **os.environ,
         'PYTHONPATH': str(SRC_DIR),
+        # Kurzes MQTT-Keepalive (5s) damit der Last-Will-Test nicht
+        # 90s warten muss bis der Broker die Session als tot deklariert.
+        'PROBE_MQTT_KEEPALIVE': os.environ.get('PROBE_MQTT_KEEPALIVE', '5'),
         # FQDN wird via socket.getfqdn() gelesen — unter macOS/Linux
         # kein env-Override. Tests müssen mit dem real-FQDN leben oder
         # den Probe-Output auf dem Topic-Pfad probe/+/... matchen.
@@ -294,12 +322,13 @@ def running_probe(tmp_path):
 
     yield proc
 
-    # Sauberer Shutdown — SIGTERM, dann ggf. SIGKILL.
-    proc.send_signal(signal.SIGTERM)
+    # Sauberer Shutdown via terminate() — auf POSIX SIGTERM,
+    # auf Windows TerminateProcess. Plattform-portabel.
+    proc.terminate()
     try:
         proc.wait(timeout=5)
     except subprocess.TimeoutExpired:
-        proc.kill()
+        proc.kill()  # POSIX SIGKILL / Windows TerminateProcess (force)
         proc.wait()
 
 

@@ -24,7 +24,6 @@ Run in CI: see .github/workflows/test.yml integration job.
 """
 import json
 import os
-import signal
 import socket
 import time
 
@@ -38,7 +37,7 @@ pytestmark = pytest.mark.integration
 
 def test_probe_publishes_connected_retained(running_probe, mqtt_subscriber):
     """A late subscriber must immediately see connected='1' (retained)."""
-    msgs = mqtt_subscriber('probe/+/connected', timeout=2)
+    msgs = mqtt_subscriber('probe/+/connected', timeout=5, min_count=1)
     matching = [m for m in msgs if m.payload == b'1']
     assert matching, f'no connected=1 retained message; got: {[m.payload for m in msgs]}'
     # Retained-Flag muss True sein
@@ -46,7 +45,7 @@ def test_probe_publishes_connected_retained(running_probe, mqtt_subscriber):
 
 
 def test_probe_publishes_capabilities_retained(running_probe, mqtt_subscriber):
-    msgs = mqtt_subscriber('probe/+/capabilities', timeout=2)
+    msgs = mqtt_subscriber('probe/+/capabilities', timeout=5, min_count=1)
     assert msgs, 'no capabilities message'
     payload = msgs[-1].payload.decode()
     # Aus running_probe-Fixture-Config:
@@ -56,7 +55,7 @@ def test_probe_publishes_capabilities_retained(running_probe, mqtt_subscriber):
 
 
 def test_probe_publishes_boot_time_retained(running_probe, mqtt_subscriber):
-    msgs = mqtt_subscriber('probe/+/boot_time', timeout=2)
+    msgs = mqtt_subscriber('probe/+/boot_time', timeout=5, min_count=1)
     assert msgs, 'no boot_time message'
     parsed = json.loads(msgs[-1].payload)
     assert parsed['data']['status'] == 'complete'
@@ -80,75 +79,76 @@ def test_probe_periodic_cycle_publishes_sensors(running_probe, mqtt_subscriber):
 
 # --- Manager-Command Roundtrip --------------------------------------------
 
-def test_command_ping_roundtrip(running_probe, mqtt_subscriber, mqtt_publisher):
-    """Manager publishes manager/<fqdn>/ping → probe replies twice on
-    probe/<fqdn>/ping: first 'received', then 'complete'."""
-    fqdn = _read_probe_fqdn(mqtt_subscriber)
-    # Subscribe BEFORE publishing so we don't miss the response
+def _command_roundtrip(mqtt_subscriber, mqtt_publisher, fqdn, command,
+                       expected_msgs=2, timeout=5):
+    """Helper: subscribe to probe/<fqdn>/<command> in background thread,
+    publish manager/<fqdn>/<command>, return collected payloads."""
     import threading
     captured: list = []
 
     def collect():
-        captured.extend(mqtt_subscriber(f'probe/{fqdn}/ping', timeout=4))
+        captured.extend(mqtt_subscriber(
+            f'probe/{fqdn}/{command}', timeout=timeout, min_count=expected_msgs))
 
     t = threading.Thread(target=collect)
     t.start()
-    time.sleep(0.5)  # subscriber needs to be wired up
+    time.sleep(0.3)  # subscriber needs to be wired up
+    mqtt_publisher(f'manager/{fqdn}/{command}', '')
+    t.join(timeout=timeout + 2)
+    return [json.loads(m.payload) for m in captured]
 
-    mqtt_publisher(f'manager/{fqdn}/ping', '')
 
-    t.join(timeout=8)
-    payloads = [json.loads(m.payload) for m in captured]
+def test_command_ping_roundtrip(running_probe, mqtt_subscriber, mqtt_publisher):
+    """Manager publishes manager/<fqdn>/ping → probe replies twice on
+    probe/<fqdn>/ping: first 'received', then 'complete'."""
+    fqdn = _read_probe_fqdn(mqtt_subscriber)
+    payloads = _command_roundtrip(mqtt_subscriber, mqtt_publisher, fqdn, 'ping',
+                                   expected_msgs=2)
     statuses = [p.get('data', {}).get('status') for p in payloads]
     assert 'received' in statuses, f'no "received" intermediate response: {statuses}'
     assert 'complete' in statuses, f'no "complete" final response: {statuses}'
 
 
 def test_command_blocked_returns_method_not_allowed(running_probe, mqtt_subscriber, mqtt_publisher):
-    """Commands not in PROBE_CAPABILITIES must be rejected."""
+    """Commands not in PROBE_CAPABILITIES must be rejected via the
+    Capability-Gate (S4)."""
     fqdn = _read_probe_fqdn(mqtt_subscriber)
-    import threading
-    captured: list = []
-
-    def collect():
-        captured.extend(mqtt_subscriber(f'probe/{fqdn}/shutdown', timeout=3))
-
-    t = threading.Thread(target=collect)
-    t.start()
-    time.sleep(0.5)
-
     # 'shutdown' is NOT in the running_probe-fixture's capabilities.
-    mqtt_publisher(f'manager/{fqdn}/shutdown', '')
-
-    t.join(timeout=6)
-    payloads = [json.loads(m.payload) for m in captured]
+    payloads = _command_roundtrip(mqtt_subscriber, mqtt_publisher, fqdn,
+                                   'shutdown', expected_msgs=1)
     errors = [p.get('error', {}).get('message') for p in payloads]
-    assert 'Method not allowed' in errors, f'expected reject, got: {payloads}'
+    assert 'Method not allowed' in errors, f'expected Capability-Gate reject, got: {payloads}'
 
 
-def test_module_attribute_attack_blocked(running_probe, mqtt_subscriber, mqtt_publisher):
-    """Sending a command for a real Python-module-attribute (os, subprocess)
-    must NOT execute it — the COMMANDS-Whitelist must gate dispatch."""
+def test_capability_gate_blocks_module_attribute(running_probe, mqtt_subscriber, mqtt_publisher):
+    """Capability-Gate (S4) layer: 'os' is not in capabilities → reject
+    with 'Method not allowed' before even reaching the Whitelist-Gate."""
     fqdn = _read_probe_fqdn(mqtt_subscriber)
-    import threading
-    captured: list = []
-
-    def collect():
-        captured.extend(mqtt_subscriber(f'probe/{fqdn}/os', timeout=3))
-
-    t = threading.Thread(target=collect)
-    t.start()
-    time.sleep(0.5)
-
-    mqtt_publisher(f'manager/{fqdn}/os', '')
-
-    t.join(timeout=6)
-    payloads = [json.loads(m.payload) for m in captured]
+    payloads = _command_roundtrip(mqtt_subscriber, mqtt_publisher, fqdn,
+                                   'os', expected_msgs=1)
     errors = [p.get('error', {}).get('message') for p in payloads]
-    # Either 'Method not allowed' (capability gate) or 'Unknown method'
-    # (whitelist gate) — beide sind security-correct.
-    assert any(e in ('Method not allowed', 'Unknown method') for e in errors), \
-        f'expected reject, got: {payloads}'
+    assert 'Method not allowed' in errors, f'expected Capability-Gate reject, got: {payloads}'
+
+
+@pytest.mark.probe_config(capabilities='os,subprocess,call_method,getattr')
+def test_whitelist_gate_blocks_module_attribute(running_probe, mqtt_subscriber, mqtt_publisher):
+    """Whitelist-Gate (S1) layer: an attacker who has full access to
+    PROBE_CAPABILITIES (= broker ACLs misconfigured) STILL cannot reach
+    arbitrary module attributes. 'os' is in capabilities → Capability-
+    Gate allows, but COMMANDS-dict doesn't have it → 'Unknown method'.
+
+    This is the critical second-line-of-defense that test_capability_
+    gate_blocks_module_attribute does NOT exercise.
+    """
+    fqdn = _read_probe_fqdn(mqtt_subscriber)
+    for forbidden in ('os', 'subprocess', 'call_method', 'getattr'):
+        payloads = _command_roundtrip(mqtt_subscriber, mqtt_publisher, fqdn,
+                                       forbidden, expected_msgs=2)
+        errors = [p.get('error', {}).get('message') for p in payloads]
+        assert 'Unknown method' in errors, (
+            f"{forbidden!r} reached the Whitelist-Gate but wasn't rejected "
+            f'as "Unknown method"; got: {payloads}'
+        )
 
 
 # --- Last-Will (~60-80s wegen broker keepalive) ----------------------------
@@ -157,23 +157,25 @@ def test_last_will_published_on_unclean_disconnect(running_probe, mqtt_subscribe
     """SIGKILL the probe → broker keepalive expires → Last-Will publishes
     connected='0'.
 
-    NOTE: paho-mqtt's default keepalive is 60s, so this test waits up
-    to ~80s. Slow but it verifies the most important MQTT-feature for
-    operational monitoring.
+    Uses PROBE_MQTT_KEEPALIVE=5 (set by running_probe-fixture) so the
+    broker detects the dead session after ~7-8s instead of paho-mqtt's
+    default 60s+. Total test time: ~10-15s.
     """
     # Step 1: make sure the probe is fully up (connected='1' retained)
-    initial = mqtt_subscriber('probe/+/connected', timeout=2)
+    initial = mqtt_subscriber('probe/+/connected', timeout=5, min_count=1)
     assert any(m.payload == b'1' for m in initial), 'probe never marked connected'
 
-    # Step 2: brutal kill
-    running_probe.send_signal(signal.SIGKILL)
+    # Step 2: brutal kill — proc.kill() ist plattform-portabel
+    # (POSIX SIGKILL, Windows TerminateProcess), löst kein sauberes
+    # disconnect aus → Broker triggert Last-Will nach Keepalive-Timeout.
+    running_probe.kill()
 
-    # Step 3: wait for the Will (broker pushes connected='0' after
-    # keepalive timeout, default 60s).
-    deadline = time.monotonic() + 90
+    # Step 3: wait for the Will. With keepalive=5, the broker should
+    # publish connected='0' within ~10-15s.
+    deadline = time.monotonic() + 25
     seen_will = False
     while time.monotonic() < deadline and not seen_will:
-        msgs = mqtt_subscriber('probe/+/connected', timeout=10)
+        msgs = mqtt_subscriber('probe/+/connected', timeout=5, min_count=1)
         for m in msgs:
             if m.payload == b'0' and m.retain:
                 seen_will = True

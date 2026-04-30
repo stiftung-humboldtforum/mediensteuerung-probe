@@ -7,6 +7,7 @@ import platform
 if platform.system() == 'Windows':
     sys.coinit_flags = 0  # COINIT_MULTITHREADED — match pythonnet/LHM
 
+import os
 import time
 import socket
 import logging
@@ -138,7 +139,12 @@ class App:
                     self.notify.status('Connecting...')
 
                 logger.info('Connecting MQTT Host: %s:%s', self.mqtt_hostname, self.mqtt_port)
-                self.mqtt_client.connect(self.mqtt_hostname, self.mqtt_port, 60)
+                # MQTT keepalive default 60s — Last-Will fires nach
+                # ~1.5x keepalive (= 90s broker default). Tests setzen
+                # PROBE_MQTT_KEEPALIVE=5 fuer schnelleren Last-Will-
+                # Trigger.
+                keepalive = int(os.environ.get('PROBE_MQTT_KEEPALIVE', '60'))
+                self.mqtt_client.connect(self.mqtt_hostname, self.mqtt_port, keepalive)
                 self.mqtt_client.loop_start()
 
                 # Warte auf das tatsaechliche on_connect-Callback statt
