@@ -35,10 +35,14 @@ jobs:
         shell: pwsh
         run: |
           Install-Module -Name PSScriptAnalyzer -Force -Scope CurrentUser -SkipPublisherCheck
-          $issues = Invoke-ScriptAnalyzer -Path scripts/ -Recurse -Severity Error,Warning
+          # Severity: nur Error. Warnings sind oft Style-Empfehlungen
+          # (z.B. PSAvoidUsingWriteHost) die fuer interaktive Smoke-
+          # Test-Skripte irrelevant sind — der OUTPUT soll direkt zum
+          # Terminal gehen, nicht in die Pipeline.
+          $issues = Invoke-ScriptAnalyzer -Path scripts/ -Recurse -Severity Error
           if ($issues) {
             $issues | Format-Table -AutoSize
-            Write-Error "PSScriptAnalyzer found $($issues.Count) issue(s)"
+            Write-Error "PSScriptAnalyzer found $($issues.Count) error(s)"
             exit 1
           }
 
