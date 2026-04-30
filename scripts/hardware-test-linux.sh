@@ -47,7 +47,7 @@ step() {
 }
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-cd "$REPO_ROOT"
+cd "$REPO_ROOT" || { echo "ERROR: cannot cd to $REPO_ROOT" >&2; exit 2; }
 
 # Python-Binary auswählen (venv falls vorhanden, sonst system).
 if [ -x "$REPO_ROOT/.venv/bin/python" ]; then
