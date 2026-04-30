@@ -84,8 +84,8 @@ unterschiedlich verhalten. 100% Branch-Coverage auf macOS sagt nichts
 
 ## 3. Integration-Tests (`pytest -m integration`)
 
-`tests/test_integration.py` enthält 8 Tests die die **wirklich
-getestet wird ob die Probe ueber MQTT korrekt agiert**:
+`tests/test_integration.py` enthält 11 Tests die **wirklich verifizieren
+ob die Probe über MQTT korrekt agiert**:
 
 | Test | Was wird verifiziert |
 |------|----------------------|
@@ -95,8 +95,11 @@ getestet wird ob die Probe ueber MQTT korrekt agiert**:
 | `test_probe_periodic_cycle_publishes_sensors` | Innerhalb 8s sind ping/uptime/errors/boot_time auf dem Bus |
 | `test_command_ping_roundtrip` | `manager/<fqdn>/ping` → 'received' + 'complete' Response |
 | `test_command_blocked_returns_method_not_allowed` | Capability-Gate live: shutdown wird abgewiesen |
-| `test_module_attribute_attack_blocked` | COMMANDS-Whitelist live: 'os' wird nicht aufgerufen |
-| `test_last_will_published_on_unclean_disconnect` | SIGKILL → connected="0" via Broker-Will (~25-80s) |
+| `test_capability_gate_blocks_module_attribute` | Capability-Gate (S4) live: `os`-Attack abgewiesen |
+| `test_whitelist_gate_blocks_module_attribute` | COMMANDS-Whitelist (S1) live: `os` in capabilities → "Unknown method" |
+| `test_last_will_published_on_unclean_disconnect` | SIGKILL → connected="0" via Broker-Will (~12s mit keepalive=5) |
+| `test_probe_exponential_backoff_on_dead_broker` | Reconnect-Backoff 5s→10s→20s aus App-Logs |
+| `test_probe_connects_via_tls` | TLS-mTLS-Handshake mit ephemerer self-signed CA |
 
 Diese Tests starten den **echten** Probe-Subprocess (`src/app.py`)
 gegen einen **echten** Mosquitto und sprechen mit ihm ueber **echtes**
@@ -261,8 +264,8 @@ mit echter Hardware reagiert.
 
 | Code-Pfad                         | macOS-Dev | CI Linux | CI macOS | CI Windows | Linux-Probe-HW | Win-Probe-HW |
 |-----------------------------------|-----------|----------|----------|------------|----------------|--------------|
-| Pure Logic (Mocks, 72 Tests)      | ✅        | ✅       | ✅       | ✅         | ✅             | ✅           |
-| MQTT Integration (8 Tests)        | ✅ (auto) | ✅       | –        | –          | ✅             | ✅           |
+| Pure Logic (Mocks, 91 Tests)      | ✅        | ✅       | ✅       | ✅         | ✅             | ✅           |
+| MQTT Integration (11 Tests)       | ✅ (auto) | ✅       | –        | –          | ✅             | ✅           |
 | `_linux.py` Import-Sanity         | –         | ✅       | –        | ❌         | ✅             | ❌           |
 | `_win32.py` Import-Sanity         | –         | ❌       | –        | ✅         | ❌             | ✅           |
 | `wpctl` mute/unmute/is_muted      | ❌        | ❌       | ❌       | ❌         | ✅ (HW-Test)   | –            |

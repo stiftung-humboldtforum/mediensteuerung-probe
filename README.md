@@ -148,8 +148,8 @@ pip install -r requirements.txt
 
 ```bash
 pip install -r requirements-dev.txt
-pytest                        # 72 Unit + 8 Integration (Auto-Broker)
-pytest -m integration         # nur Integration gegen Auto-Broker
+pytest                        # 102 tests (91 unit + 11 integration), Auto-Broker spawns Mosquitto
+pytest -m integration         # nur die 11 Integration-Tests gegen Auto-Broker
 ```
 
 For Linux-codepath verification on a macOS dev machine, use Docker:
@@ -340,7 +340,7 @@ The test suite handles its own MQTT broker — install
 
 pip install -r requirements-dev.txt
 pytest                       # 102 tests, ~50s — Auto-Broker spawns Mosquitto if needed
-pytest -m integration        # only the 9 integration tests (real Mosquitto roundtrips)
+pytest -m integration        # only the 11 integration tests (real Mosquitto roundtrips)
 ```
 
 For ad-hoc manual exploration (Probe + your own MQTT-Explorer

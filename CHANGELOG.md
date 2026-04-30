@@ -140,10 +140,12 @@ across security, robustness, cross-platform support, and testing.
   instead of inline-list with commas).
 
 ### Testing
-- **102 tests** in 4 layers: 72 unit (`test_misc`, `test_methods`,
-  `test_methods_win32`, `test_probe`, `test_app`), 22 platform-mock
-  (`test_methods_win32`), 8 integration (`test_integration` against
-  real Mosquitto), pre-commit + shellcheck + PSScriptAnalyzer in CI.
+- **102 tests** in 3 layers:
+  - 91 unit (`test_misc` 18, `test_methods` 20, `test_methods_win32` 11,
+    `test_probe` 30, `test_app` 12) — pure logic with mocks
+  - 11 integration (`test_integration` — real Mosquitto roundtrips,
+    incl. TLS-mTLS, Last-Will, Reconnect-Backoff)
+  - CI lint: pre-commit + shellcheck + PSScriptAnalyzer
 - **85% coverage** including subprocess-tracking via
   `tests/sitecustomize.py` (covers App.run real lifecycle, not just
   mock-paths).
