@@ -14,21 +14,36 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        os: [ubuntu-latest, macos-latest, windows-latest]
         python-version: ['3.9', '3.10', '3.11', '3.12', '3.13']
-        # macOS uses methods._stub.py (no pycaw / no LHM / no wpctl).
-        # Tests target the platform-agnostic codepath; this job mainly
-        # verifies _stub stays import-clean and macOS-Devs aren't
-        # surprised by a regression.
+        # Per-OS notes:
+        # - ubuntu-latest: production target. Full unit-test suite.
+        # - macos-latest:  Thomas' dev environment. Uses methods._stub.py
+        #                  (no pycaw / no LHM / no wpctl).
+        # - windows-latest: production target. Loads methods._win32.py
+        #                  but pycaw/LHM/pythonnet need real audio +
+        #                  admin rights, so this job mainly verifies
+        #                  that _win32.py stays import-clean and the
+        #                  unit-test suite passes against the Windows
+        #                  Python build.
         exclude:
-          # macos-latest only ships modern Pythons via setup-python;
-          # narrowing the matrix avoids unnecessary runners.
+          # macos-latest + windows-latest only ship modern Pythons via
+          # setup-python; narrow the matrix to avoid runner-minute
+          # waste on legacy versions.
           - os: macos-latest
             python-version: '3.9'
           - os: macos-latest
             python-version: '3.10'
           - os: macos-latest
             python-version: '3.11'
+          - os: windows-latest
+            python-version: '3.9'
+          - os: windows-latest
+            python-version: '3.10'
+          - os: windows-latest
+            python-version: '3.11'
+          - os: windows-latest
+            python-version: '3.12'
 
     steps:
       - uses: actions/checkout@v4
@@ -82,36 +97,16 @@ jobs:
             requirements.txt
             requirements-dev.txt
 
-      - name: Install Mosquitto
+      - name: Install Mosquitto on PATH
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq mosquitto mosquitto-clients
-          # Disable the default systemd-managed instance so it doesn't
-          # bind 1883 and conflict with our test config.
+          # The default systemd-managed instance is irrelevant — the
+          # auto-broker fixture (tests/conftest.py) spawns its own
+          # mosquitto on PROBE_TEST_PORT. We just need the binary on
+          # $PATH.
           sudo systemctl stop mosquitto || true
           sudo systemctl disable mosquitto || true
-
-      - name: Start test broker
-        run: |
-          # CI nutzt eine inline-config statt mosquitto/test.conf damit
-          # der listener-port klar ist (config-file-port + -p arg
-          # interagieren je nach mosquitto-Version unterschiedlich).
-          cat > /tmp/test-broker.conf <<'EOF'
-          listener 11883
-          allow_anonymous true
-          persistence false
-          EOF
-          mosquitto -c /tmp/test-broker.conf -d
-          # Wait until it accepts connections
-          for i in $(seq 1 30); do
-            if mosquitto_sub -h 127.0.0.1 -p 11883 -t '$SYS/broker/version' -W 1 -C 1 2>/dev/null; then
-              echo "broker is up"
-              exit 0
-            fi
-            sleep 1
-          done
-          echo "broker did not come up in 30s" >&2
-          exit 1
 
       - name: Install Python dependencies
         run: |
@@ -119,7 +114,6 @@ jobs:
           pip install -r requirements-dev.txt
 
       - name: Run integration tests
-        env:
-          PROBE_TEST_BROKER: 127.0.0.1
-          PROBE_TEST_PORT: 11883
+        # The auto-broker fixture spawns mosquitto for the session
+        # automatically — no separate "Start broker" step needed.
         run: pytest -m integration -v

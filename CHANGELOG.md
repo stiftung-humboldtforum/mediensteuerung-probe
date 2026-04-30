@@ -10,6 +10,34 @@ For the historical migration from `avorus-probe` see
 
 ## [Unreleased]
 
+### Added
+- **Auto-Broker fixture**: `tests/conftest.py:pytest_configure` startet
+  bei `pytest -m integration` automatisch einen ephemeren Mosquitto in
+  einem Subprocess wenn keiner erreichbar ist und `mosquitto` auf
+  `$PATH` steht. Cleanup über `pytest_unconfigure`. Kein manuelles
+  `docker compose up` oder `mosquitto -d` mehr nötig.
+- **Windows-CI-Slot**: `windows-latest` Python 3.13 in der CI-Matrix
+  verifiziert dass `_win32.py` import-clean ist und der Unit-Test-
+  Suite gegen die Windows-Python-Version grün bleibt.
+- **`scripts/hardware-test-linux.sh`** + **`scripts/hardware-test-windows.ps1`**:
+  Direkt-Aufrufe der Plattform-spezifischen Funktionen (wpctl/xrandr/
+  psutil-Sensors auf Linux; pycaw/LHM/Win32 auf Windows) mit PASS/FAIL-
+  Reporting, runnable via SSH/RDP nach Deploy.
+
+### Changed
+- CI integration-Job vereinfacht — der explizite `Start test broker`-
+  Step ist weg, der Auto-Broker übernimmt.
+- **Bug-Fixes aus dem ersten Live-E2E-Test:**
+  - `get_config` ignoriert jetzt Kommentar-Zeilen (R4 Userconfig hatte
+    welche eingeführt, `shlex.split` zerlegte sie zu Garbage-Keys).
+  - `App.run`-Watchdog-Stall-Tolerance: erst nach 3 stallenden Cycles
+    Warning, fängt den initialen Probe-Thread/App-Thread Start-Race ab.
+  - `.pre-commit-config.yaml` ruff-args YAML-Syntax (Block-Style statt
+    Inline-List mit Kommas).
+- **Live-verifiziert** durch lokalen E2E-Test gegen brew-mosquitto:
+  Smoke-Test 7/7, Last-Will (SIGKILL → connected="0"), Reconnect-
+  Backoff 5s→10s→20s→40s, Recovery + Backoff-Reset.
+
 ## [0.2.0] — 2026-04-29
 
 ### Security

@@ -106,38 +106,47 @@ paho-mqtt — kein Mocking. Alles was Unit-Tests nicht abdecken
 Tests skippen automatisch wenn kein Broker erreichbar ist (siehe
 `tests/conftest.py::pytest_collection_modifyitems`).
 
-### 3a. Lokal: Broker via Docker oder Mosquitto
+### 3a. Lokal: pytest startet den Broker selbst
 
-**Variante A — Docker:**
+**Wenn `mosquitto` auf `$PATH` ist** (`brew install mosquitto`/`apt install
+mosquitto`), startet `tests/conftest.py:pytest_configure` automatisch
+einen ephemeren Broker auf `127.0.0.1:11883` für die Test-Session und
+räumt am Ende auf:
+
+```bash
+pytest -m integration
+# [conftest] auto-started mosquitto pid=12345 on 127.0.0.1:11883 ...
+```
+
+Kein `docker compose up` und kein manuelles `mosquitto -d` nötig. CI
+funktioniert auf dem gleichen Mechanismus — apt-installs `mosquitto`
+und ruft `pytest` auf.
+
+**Wenn ein Broker schon läuft** (z.B. dein eigener Test-Mosquitto, oder
+ein Staging-Broker via env-vars), erkennt das die Auto-Logik via TCP-
+Probe und überlässt ihm den Bus:
+
+```bash
+PROBE_TEST_BROKER=staging.mqtt.example.com PROBE_TEST_PORT=1883 \
+  pytest -m integration
+```
+
+**Wenn weder Broker noch `mosquitto` auf PATH** sind, werden Integration-
+Tests übersprungen mit klarer Meldung — Unit-Tests laufen normal.
+
+**Optional: Docker statt apt/brew-install:**
 ```bash
 docker compose -f docker-compose.test.yml up -d
 pytest -m integration
 docker compose -f docker-compose.test.yml down
 ```
 
-**Variante B — Mosquitto direkt:**
-```bash
-# macOS:  brew install mosquitto
-# Debian: sudo apt install mosquitto
-mosquitto -p 11883 -v &
-pytest -m integration
-kill %1
-```
+### 3b. Manuelle Debug-Session — was die Tests automatisieren
 
-**Anderer Broker (z.B. Staging):**
-```bash
-PROBE_TEST_BROKER=staging.mqtt.example.com PROBE_TEST_PORT=1883 \
-  pytest -m integration
-```
+Wenn ein integration-Test failed kann es helfen, die Schritte
+hand-by-hand auszuführen um zu sehen wo's hakt.
 
-Der `PROBE_TEST_BROKER:PROBE_TEST_PORT` Env-Var-Override macht die
-Tests broker-agnostisch — gleicher Test-Code laeuft gegen lokales
-mosquitto, gegen einen Docker-Container oder gegen einen echten
-Staging-Broker.
-
-### 3b. Manuelle Beobachtung — was die Tests automatisieren
-
-### 3a. Mosquitto starten
+#### Mosquitto starten
 
 ```bash
 # macOS
@@ -149,7 +158,7 @@ sudo apt install mosquitto mosquitto-clients
 mosquitto -p 1883 -v
 ```
 
-### 3b. Probe lokal starten (gegen lokalen Broker)
+#### Probe lokal starten (gegen lokalen Broker)
 
 ```bash
 cd src
@@ -164,7 +173,7 @@ Der `--no_tls` Banner sollte als "localhost broker / for local testing
 only" erscheinen — wenn er stattdessen die laute Production-Warnung
 schreibt, ist im hostname-Check was schief.
 
-### 3c. Sensor-Topics beobachten
+#### Sensor-Topics beobachten
 
 In zweitem Terminal:
 
@@ -187,7 +196,7 @@ probe/<fqdn>/mpv_file_pos_sec  {...}
 probe/<fqdn>/errors            {...}         ← Status-Aggregation, einmal pro Cycle
 ```
 
-### 3d. Manager-Commands testen
+#### Manager-Commands testen
 
 In drittem Terminal:
 
@@ -206,7 +215,7 @@ mosquitto_pub -h 127.0.0.1 -p 1883 -t 'manager/<fqdn>/subprocess' -m ''
 
 Alles via `scripts/smoke-test.sh` automatisierbar — siehe das Skript.
 
-### 3e. Last-Will testen
+#### Last-Will testen
 
 Probe brutal killen (`kill -9 <pid>`) während ein zweiter
 `mosquitto_sub` läuft. Nach ~60s sollte:
@@ -219,7 +228,7 @@ Das ist der MQTT-Last-Will (B5). Bei sauberem `Ctrl-C` wird der
 Will *nicht* getriggert (saubere Disconnect-Sequenz) — `connected`
 bleibt auf `"1"`.
 
-### 3f. Reconnect-Backoff testen
+#### Reconnect-Backoff testen
 
 Probe gegen toten Broker starten:
 
@@ -248,7 +257,55 @@ reset auf 5s.
 Auf der Ziel-Hardware (Kiosk-PC). Diese Tests verifizieren das was nur
 mit echter Hardware reagiert.
 
-### Linux (Debian/Ubuntu, PipeWire)
+### 4a. Plattform-Verifikations-Matrix
+
+| Code-Pfad                         | macOS-Dev | CI Linux | CI macOS | CI Windows | Linux-Probe-HW | Win-Probe-HW |
+|-----------------------------------|-----------|----------|----------|------------|----------------|--------------|
+| Pure Logic (Mocks, 72 Tests)      | ✅        | ✅       | ✅       | ✅         | ✅             | ✅           |
+| MQTT Integration (8 Tests)        | ✅ (auto) | ✅       | –        | –          | ✅             | ✅           |
+| `_linux.py` Import-Sanity         | –         | ✅       | –        | ❌         | ✅             | ❌           |
+| `_win32.py` Import-Sanity         | –         | ❌       | –        | ✅         | ❌             | ✅           |
+| `wpctl` mute/unmute/is_muted      | ❌        | ❌       | ❌       | ❌         | ✅ (HW-Test)   | –            |
+| `xrandr` display                  | ❌        | ❌       | ❌       | ❌         | ✅ (HW-Test)   | –            |
+| `psutil.sensors_temperatures`     | ❌        | ❌¹      | ❌       | ❌         | ✅ (HW-Test)   | –            |
+| `pycaw` Audio                     | –         | –        | –        | ❌²        | –              | ✅ (HW-Test) |
+| `LibreHardwareMonitor` (Win)      | –         | –        | –        | ❌²        | –              | ✅ (HW-Test) |
+| Win32 `EnumDisplaySettingsW`      | –         | –        | –        | ✅         | –              | ✅           |
+| `sudo shutdown/reboot`            | ❌        | ❌       | ❌       | ❌         | ✅ (zerstört!) | –            |
+| `systemd` Type=notify + Watchdog  | ❌        | ❌       | ❌       | –          | ✅ (post-deploy)| –           |
+| NSSM Service-Install              | –         | –        | –        | ❌         | –              | ✅ (post-deploy)|
+
+¹ CI hat keine echten Hardware-Sensoren — `psutil.sensors_temperatures()`
+   liefert dort i.d.R. ein leeres Dict.
+² LibreHardwareMonitor + pycaw brauchen Admin-Rechte und echtes Audio-
+   Endpoint — auf GHA-Windows-Runner nicht testbar. CI verifiziert nur
+   Import-Sanity.
+
+### 4b. Linux (Debian/Ubuntu, PipeWire) — automatisiert via Skript
+
+```bash
+ssh kiosk-01 "cd /opt/humboldt-probe && bash scripts/hardware-test-linux.sh"
+```
+
+Das Skript läuft 8 Checks (display, uptime, temperatures, fans, audio
+mute-toggle, easire, mpv_control wenn vorhanden, sudo-NOPASSWD-
+Berechtigung) und reportet PASS/FAIL pro Check. Audio-Toggle ist
+invasiv — bei Live-Betrieb mit `SKIP_AUDIO=1`.
+
+### 4c. Windows — automatisiert via Skript
+
+```powershell
+# Lokal oder via SSH/RDP, als Admin (sonst LHM leer):
+.\scripts\hardware-test-windows.ps1
+.\scripts\hardware-test-windows.ps1 -SkipAudio   # bei Live-Betrieb
+```
+
+Das Skript läuft 7 Checks (Win32-Display, psutil-Uptime, LHM-Temps,
+LHM-Fans, pycaw mute-toggle, easire, shutdown.exe Vorhandensein).
+
+### 4d. Manuelle Direkt-Aufrufe (falls die Skripte nicht passen)
+
+#### Linux (per SSH oder lokal)
 
 ```bash
 # Audio
@@ -273,7 +330,7 @@ python -c "from src.methods._linux import uptime; print(uptime())"
 python -c "from src.methods import easire; print(easire())"
 ```
 
-### Windows (per OpenSSH oder lokal in PowerShell)
+#### Windows (per OpenSSH oder lokal in PowerShell)
 
 ```powershell
 # Audio (pycaw)
