@@ -10,178 +10,162 @@ For the historical migration from `avorus-probe` see
 
 ## [Unreleased]
 
-### Added (Test-Vertiefung — gefunden im "fokus testing" Review)
-- **TLS-Integration-Test** (L-T3) — der Production-Pfad mit
-  `--ca_certificate / --certfile / --keyfile` ist jetzt automatisiert
-  getestet. `tests/_certs.py` erzeugt ephemere CA + Server + Client-
-  Zertifikate, `tls_broker`-Fixture startet einen separaten Mosquitto
-  mit `require_certificate=true` (mTLS). Vorher 0% getestet, jetzt
-  100% des TLS-Connect-Codepaths.
-- **Reconnect-Backoff-Integration-Test** (L-T4) — verifiziert
-  exponentielle Progression der Reconnect-Wartezeiten direkt aus den
-  App-Logs.
-- **Whitelist-Gate-Integration-Test** (L-T2 echt) — `probe_config`-
-  Marker erlaubt Tests mit eigenen Capabilities. Erster Test der
-  beweist dass die COMMANDS-Whitelist (S1) als zweite Verteidigungs-
-  linie greift, wenn die Capability-Gate (S4) durchlässt.
-- **`_win32.py` Mock-Tests** (L-T12) — 11 Tests die pycaw, pythonnet/
-  LHM und Win32 EnumDisplaySettingsW mocken. Coverage 0% → 93% ohne
-  echte Windows-Hardware.
-- **`_linux.display`-Parser Mock-Tests** (L-T11) — 4 Tests mit
-  realistischen xrandr-Outputs (1080p/60Hz, 1440p/144Hz, no-active-
-  mode, xrandr-Fail).
-- **notify-Sequence-Tests** (L-T5) — 4 Tests verifizieren
-  `sd_notify`-Calls in App.run (Setup-Fail, exception-detail in
-  status, notify-disabled, notify=None).
-- **shell-lint CI-Job** (L-T7) — `shellcheck` für `*.sh`,
-  `PSScriptAnalyzer` für `*.ps1`. Fängt Syntax-Fehler in
-  Hardware-Test- und Install-Skripten in CI.
-- **pre-commit CI-Job** (CI2) — läuft `pre-commit run --all-files`,
-  fängt Stilfehler ohne lokales `pre-commit install`.
-- **macOS-Integration-Slot** (CI1) — Integration-Tests auch auf
-  macOS via `brew install mosquitto`.
-- **`scripts/mpv_control.example.sh`** (O2) — Reference impl des
-  externen mpv_control-Tools das die `mpv_file_pos_sec`-Sensor
-  voraussetzt.
+## [0.2.0] — 2026-04-30
 
-### Changed (Test-Infrastruktur)
-- **Subprocess-Coverage** (L-T1) — `tests/sitecustomize.py` +
-  `[tool.coverage.run] parallel=true` lassen den Probe-Subprocess in
-  Integration-Tests jetzt zur Coverage beitragen. `app.py` 48% → 73%,
-  Total 71% → **85%**.
-- **`mqtt_subscriber` event-driven** (C6) — `min_count`-Parameter,
-  retained-Tests von ~2s blocking auf <100ms beschleunigt.
-- **MQTT-Keepalive konfigurierbar** (L-T9) — `PROBE_MQTT_KEEPALIVE`
-  env-var. Tests setzen 5s, Last-Will-Test in 12s statt 23s.
-- **xdist-Port-Suffix** (C2) — pro pytest-xdist-worker ein eigener
-  Port, vermeidet Konflikt bei parallelen Test-Runs.
-- **Coverage nur in 1 CI-Slot** (CI4) — andere Matrix-Slots laufen
-  `pytest` ohne `--cov`, ~30s schneller pro Slot.
-- **`_win32.py` aus Coverage-omit raus** — durch L-T12 jetzt echt
-  testbar.
-- **`signal.SIGKILL` durch `proc.kill()` ersetzt** (C3) — plattform-
-  portabel (POSIX SIGKILL, Windows TerminateProcess).
-- **Setup-Failure setzt notify.status** — vorher kein Status-Update
-  im Setup-Fail-Pfad, der Operator wusste nicht woran's lag.
-- **`--no_tls` setzt notify-Status auf `'UNSAFE: --no_tls active'`**
-  (S-R1) — sichtbar in `systemctl status`.
-
-### Added (vorherige Welle)
-- **Auto-Broker fixture**: `tests/conftest.py:pytest_configure` startet
-  bei `pytest -m integration` automatisch einen ephemeren Mosquitto in
-  einem Subprocess wenn keiner erreichbar ist und `mosquitto` auf
-  `$PATH` steht. Cleanup über `pytest_unconfigure`. Kein manuelles
-  `docker compose up` oder `mosquitto -d` mehr nötig.
-- **Windows-CI-Slot**: `windows-latest` Python 3.13 in der CI-Matrix
-  verifiziert dass `_win32.py` import-clean ist und der Unit-Test-
-  Suite gegen die Windows-Python-Version grün bleibt.
-- **`scripts/hardware-test-linux.sh`** + **`scripts/hardware-test-windows.ps1`**:
-  Direkt-Aufrufe der Plattform-spezifischen Funktionen (wpctl/xrandr/
-  psutil-Sensors auf Linux; pycaw/LHM/Win32 auf Windows) mit PASS/FAIL-
-  Reporting, runnable via SSH/RDP nach Deploy.
-
-### Changed
-- CI integration-Job vereinfacht — der explizite `Start test broker`-
-  Step ist weg, der Auto-Broker übernimmt.
-- **Bug-Fixes aus dem ersten Live-E2E-Test:**
-  - `get_config` ignoriert jetzt Kommentar-Zeilen (R4 Userconfig hatte
-    welche eingeführt, `shlex.split` zerlegte sie zu Garbage-Keys).
-  - `App.run`-Watchdog-Stall-Tolerance: erst nach 3 stallenden Cycles
-    Warning, fängt den initialen Probe-Thread/App-Thread Start-Race ab.
-  - `.pre-commit-config.yaml` ruff-args YAML-Syntax (Block-Style statt
-    Inline-List mit Kommas).
-- **Live-verifiziert** durch lokalen E2E-Test gegen brew-mosquitto:
-  Smoke-Test 7/7, Last-Will (SIGKILL → connected="0"), Reconnect-
-  Backoff 5s→10s→20s→40s, Recovery + Backoff-Reset.
-
-## [0.2.0] — 2026-04-29
+The first release after the `avorus-probe` fork. Major hardening
+across security, robustness, cross-platform support, and testing.
+102 tests, 85% coverage, full CI on Linux/macOS/Windows.
 
 ### Security
-- Command-Whitelist (`COMMANDS` dict) replaces reflection-based dispatch in `Probe.on_message` —
-  manager can no longer reach imported module attributes (`os`, `subprocess`, ...).
-- Sensor / Command separation via explicit `SENSORS` / `COMMANDS` whitelists prevents
-  `shutdown` accidentally landing in `PROBE_METHODS` and being polled every 5s.
-- Fail-closed default for missing `PROBE_CAPABILITIES` (was permissive
-  `wake,shutdown,reboot`).
-- Payload args/kwargs `isinstance` validation in `parse_payload`.
-- Topic parsing safe against malformed manager topics (no IndexError).
-- Loud banner warning when `--no_tls` is used against a non-localhost broker.
+- **Command-Whitelist** (`COMMANDS` dict) replaces reflection-based
+  dispatch in `Probe.on_message` — manager can no longer reach
+  imported module attributes (`os`, `subprocess`, ...).
+- **Sensor / Command separation** via explicit `SENSORS` / `COMMANDS`
+  whitelists prevents `shutdown` accidentally landing in
+  `PROBE_METHODS` and being polled every 5s.
+- **Fail-closed** default for missing `PROBE_CAPABILITIES` (was
+  permissive `wake,shutdown,reboot`).
+- **Payload validation**: `args`/`kwargs` `isinstance`-checks in
+  `parse_payload` block malicious JSON.
+- **Topic-parsing** safe against malformed manager topics
+  (no `IndexError`).
+- **Loud `--no_tls` banner** + sd_notify `'UNSAFE: --no_tls active'`
+  status when used against non-localhost broker.
+- **TLS/mTLS path** verified by integration test (self-signed CA,
+  `require_certificate=true`).
 
 ### Added
-- Cross-platform support: Linux (`_linux.py`) and Windows (`_win32.py`) implementations,
-  unified dispatch in `methods/__init__.py`, graceful `_stub.py` fallback for macOS dev.
-- MQTT Last-Will (`probe/<fqdn>/connected = "0"`) so broker informs manager on unclean
-  disconnects.
-- Retained `connected` / `capabilities` / `boot_time` so newly subscribing managers see
-  current state immediately.
-- QoS 1 for command responses + critical state topics.
-- Sensor values for `display`, `easire`, `mpv_file_pos_sec` are now actually published
-  (previously only ok/error in the errors-dict).
-- `sd_notify` watchdog gated on Probe-Thread heartbeat — stalled probes get auto-
-  restarted by systemd instead of the watchdog firing into a dead App-loop.
-- Exponential backoff (5s → 60s) on reconnect failures.
-- `subprocess` timeouts (3-5s) on all external tool calls (wpctl, xrandr, mpv_control)
-  to prevent the Probe-Thread from hanging when those tools are unresponsive.
-- `App.fqdn` cached + explicit `_refresh_fqdn()` raising `FqdnChanged` (was a Property
-  with side-effect + DNS-Lookup per read).
-- `connected_event` (threading.Event) replaces blind `time.sleep(3)` after MQTT connect —
-  no more reconnect-flap on slow brokers.
-- `_stop_event` for interruptible `Probe.run` sleeps (was `time.sleep(5)` blocking the
-  shutdown by up to 5s).
-- `notify.status` now contains exception type + message instead of generic `Failed.`.
-- Heartbeat bump in `on_connect` so the watchdog sees a live signal even before the first
-  `call_methods()` cycle completes.
-- Reference `systemd/humboldt-probe.service` unit file (Type=notify, WatchdogSec=30s).
-- `scripts/install-windows.ps1` — idempotent NSSM service setup.
-- GitHub Actions CI: pytest matrix Linux (Python 3.9-3.13) + macOS (3.12-3.13),
-  DeprecationWarning treated as error.
-- Coverage reporting in CI.
-- Dependabot config (monthly pip + actions updates).
-- Pre-commit hooks (whitespace, syntax checks, ruff lite).
-- `pyproject.toml` for project metadata + tool config.
-- `requirements.lock.txt` via `pip-compile` for reproducible builds.
+- **Cross-platform support**: Linux (`_linux.py`), Windows (`_win32.py`),
+  graceful `_stub.py` fallback for macOS dev. Unified dispatch in
+  `methods/__init__.py`.
+- **MQTT Last-Will** (`probe/<fqdn>/connected = "0"`) so broker
+  informs manager on unclean disconnects.
+- **Retained** `connected` / `capabilities` / `boot_time` so newly
+  subscribing managers see current state immediately.
+- **QoS 1** for command responses and critical state topics.
+- Sensor values for `display`, `easire`, `mpv_file_pos_sec` are now
+  actually published (previously only ok/error in the errors-dict).
+- **`sd_notify` watchdog** gated on Probe-Thread heartbeat — stalled
+  probes get auto-restarted by systemd instead of the watchdog firing
+  into a dead App-loop.
+- **Exponential backoff** (5s → 60s) on reconnect failures.
+- **`subprocess` timeouts** (3-5s) on all external tool calls (wpctl,
+  xrandr, mpv_control) to prevent Probe-Thread from hanging.
+- **`App.fqdn` cached** + explicit `_refresh_fqdn()` raising
+  `FqdnChanged` (was a Property with side-effect + DNS-Lookup per
+  read).
+- **`connected_event`** (threading.Event) replaces blind
+  `time.sleep(3)` after MQTT connect — no more reconnect-flap on slow
+  brokers.
+- **`_stop_event`** for interruptible `Probe.run` sleeps (was
+  `time.sleep(5)` blocking the shutdown by up to 5s).
+- **`notify.status`** now contains exception type + message instead
+  of generic `Failed.`. Setup-failures also get a status update.
+- **Heartbeat bump** in `on_connect` so the watchdog sees a live
+  signal even before the first `call_methods()` cycle completes.
+- Reference [`systemd/humboldt-probe.service`](systemd/humboldt-probe.service)
+  unit file (Type=notify, WatchdogSec=30s).
+- [`scripts/install-windows.ps1`](scripts/install-windows.ps1) —
+  idempotent NSSM service setup.
+- [`scripts/hardware-test-{linux.sh,windows.ps1}`](scripts/) — direct
+  sensor invocation with PASS/FAIL reporting, runnable via SSH/RDP
+  after deploy.
+- [`scripts/smoke-test.sh`](scripts/smoke-test.sh) — pre-/post-deploy
+  MQTT verification.
+- [`scripts/mpv_control.example.sh`](scripts/mpv_control.example.sh)
+  — reference impl for the optional `mpv_file_pos_sec` helper.
+- [`pyproject.toml`](pyproject.toml) for project metadata + tool
+  config (pytest, coverage).
+- [`requirements.lock.txt`](requirements.lock.txt) via `pip-compile`
+  for reproducible builds.
+- [`Dockerfile.linux-test`](Dockerfile.linux-test) +
+  [`docker-compose.linux-test.yml`](docker-compose.linux-test.yml) —
+  Linux-codepath verification on macOS-Dev without VM.
 - LICENSE placeholder (Stiftung action required).
 
 ### Changed
-- `paho-mqtt` upgraded from 1.6.1 to 2.x with `CallbackAPIVersion.VERSION2` callbacks.
-- `os.system()` → `subprocess.run([...])` for shutdown/reboot with proper error
-  reporting (rc + stderr).
-- All `shell=True` removed from sensor commands (xrandr, mpv_control); were static
-  strings, no injection risk, but cleaner without.
-- `easire()` Linux unified with Windows on `psutil.process_iter` (was `ps ax | grep`).
-- Windows `temperatures()` / `fans()` schema unified with Linux: multiple sensors per
-  hardware (was first-only).
-- `sys.coinit_flags = 0` moved from `methods/__init__.py` to top of `app.py` (had to
-  happen before any other import touched COM).
-- Loglevel default `INFO` (was `CRITICAL`); ISO-timestamps in log format.
-- `errors`-topic published once per cycle instead of per-method (N redundant publishes).
-- `error_response` renamed to `status_response` (reflects that it carries data, not error).
-- Plattform-specific code split out of `methods/sensors.py` and `methods/__init__.py`
-  into `_linux.py` / `_win32.py` / `_stub.py`. Old `sensors.py` deleted.
-- README rewritten: concrete MQTT-topic table (retain/qos/payload), pyproject section,
-  reproducible-build workflow.
-- `requirements.txt` consistently pinned with major-caps; `pytest` moved to
-  `requirements-dev.txt`.
-- `userconfig.example.txt` now includes `mpv_file_pos_sec` and inline doc.
-- `CHANGELOG_linux.md` renamed to `docs/migration-from-avorus.md` with note that it's
-  a one-shot migration log, not a living changelog.
-- DLLs (LibreHardwareMonitorLib, HidSharp) now committed under `lib/win32/` with
-  `LICENSE.txt` for the bundled binaries (.gitignore was previously blocking them).
+- **`paho-mqtt`** upgraded from 1.6.1 to 2.x with
+  `CallbackAPIVersion.VERSION2` callbacks.
+- `os.system()` → `subprocess.run([...])` for shutdown/reboot with
+  proper error reporting (rc + stderr).
+- All `shell=True` removed from sensor commands; were static strings,
+  no injection risk, but cleaner without.
+- `easire()` Linux unified with Windows on `psutil.process_iter`
+  (was `ps ax | grep`).
+- Windows `temperatures()` / `fans()` schema unified with Linux:
+  multiple sensors per hardware (was first-only).
+- `sys.coinit_flags = 0` moved from `methods/__init__.py` to top of
+  `app.py` (had to happen before any other import touched COM).
+- Loglevel default `INFO` (was `CRITICAL`); ISO-timestamps in log
+  format.
+- `errors`-topic published once per cycle instead of per-method
+  (eliminated redundant publishes).
+- `error_response` renamed to `status_response` (reflects that it
+  carries data, not error).
+- Platform-specific code split out of `methods/sensors.py` (deleted)
+  into `_linux.py` / `_win32.py` / `_stub.py`.
+- `requirements.txt` consistently pinned with major-caps; `pytest`
+  moved to `requirements-dev.txt`.
+- `userconfig.example.txt` now includes `mpv_file_pos_sec` and inline
+  doc.
+- `CHANGELOG_linux.md` renamed to
+  [`docs/migration-from-avorus.md`](docs/migration-from-avorus.md)
+  with note that it's a one-shot migration log.
+- LHM/HidSharp DLLs (lib/win32/) now committed with `LICENSE.txt` for
+  the bundled binaries (.gitignore had previously blocked them).
+- MQTT-Keepalive configurable via `PROBE_MQTT_KEEPALIVE` env-var
+  (Tests use 5s for fast Last-Will-Trigger; production keeps 60s).
 
 ### Fixed
-- `try/except Exception` in `Probe.__init__` for missing config keys narrowed to
-  `KeyError`.
-- Unknown periodic methods log a warning instead of being silently dropped.
-- `check_*` methods set `errors[name] = 'error'` even when the underlying sensor raises
-  (previously stale-state).
-- Capabilities re-publish in `call_methods` removed (was QoS 0 / not retained — pure
-  traffic noise; on_connect already publishes retained).
+- `try/except Exception` in `Probe.__init__` for missing config keys
+  narrowed to `KeyError`.
+- Unknown periodic methods log a warning instead of being silently
+  dropped.
+- `check_*` methods set `errors[name] = 'error'` even when the
+  underlying sensor raises (previously stale-state).
+- Capabilities re-publish in `call_methods` removed (was QoS 0 / not
+  retained — pure traffic noise; on_connect already publishes
+  retained).
+- **`get_config`** ignores comment lines (`shlex.split` would
+  otherwise tokenize `# Periodic Sensor-Polls` into garbage keys).
+- **`App.run` STALL_TOLERANCE=2** for the initial Probe-Thread/App-
+  Thread Start-Race.
+- **`signal.SIGKILL` → `proc.kill()`** for Windows portability
+  (POSIX SIGKILL, Windows TerminateProcess).
+- **Python 3.9 compat**: `Optional[dict]` instead of `dict | None` at
+  module level.
+- **Windows-PowerShell CI compat**: `shell: bash` for cross-platform
+  workflow steps.
+- **`.pre-commit-config.yaml`** ruff-args YAML-Syntax (Block-style
+  instead of inline-list with commas).
 
-### Tests
-- 70 unit tests covering misc, methods (Linux paths + common), Probe-class +
-  Probe-Thread lifecycle, App-layer (FQDN caching, no_tls banner, CLI validation).
-- Integration tests for subprocess timeouts (TimeoutExpired propagation).
-- DeprecationWarning treated as test error in CI.
+### Testing
+- **102 tests** in 4 layers: 72 unit (`test_misc`, `test_methods`,
+  `test_methods_win32`, `test_probe`, `test_app`), 22 platform-mock
+  (`test_methods_win32`), 8 integration (`test_integration` against
+  real Mosquitto), pre-commit + shellcheck + PSScriptAnalyzer in CI.
+- **85% coverage** including subprocess-tracking via
+  `tests/sitecustomize.py` (covers App.run real lifecycle, not just
+  mock-paths).
+- **TLS/mTLS integration test** with ephemeral self-signed CA
+  ([`tests/_certs.py`](tests/_certs.py)).
+- **Auto-Broker fixture**: `tests/conftest.py` spawns mosquitto for
+  the test session if none reachable + mosquitto on `$PATH`.
+- **Reconnect-Backoff integration test** verifies exponential
+  progression directly from App logs.
+- **Whitelist-Gate integration test** with custom capabilities marker
+  (`@pytest.mark.probe_config`).
+- **Real Linux + macOS dev + Windows CI**: matrix Linux (Python
+  3.9-3.13) + macOS (3.12-3.13) + Windows 3.13. DeprecationWarning
+  treated as test error.
+- **`mqtt_subscriber` event-driven** (`min_count` parameter) for
+  fast retained-message tests.
+- **`xdist`-port-suffix** for parallel test sessions.
+
+### Live-verified
+End-to-end against `brew install mosquitto` during the test-deepening
+phase: smoke-test 7/7, Last-Will via SIGKILL, Reconnect-Backoff
+5s→10s→20s→40s with broker-down/up cycle, recovery + backoff-reset.
 
 [Unreleased]: https://github.com/stiftung-humboldtforum/mediensteuerung-probe/compare/v0.2.0...HEAD
 [0.2.0]: https://github.com/stiftung-humboldtforum/mediensteuerung-probe/releases/tag/v0.2.0

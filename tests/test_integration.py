@@ -211,13 +211,15 @@ def test_probe_exponential_backoff_on_dead_broker(tmp_path):
         'PROBE_METHODS="ping"\nPROBE_CAPABILITIES="ping"\n'
     )
     src_dir = Path(__file__).parent.parent / 'src'
+    tests_dir = Path(__file__).parent
+    # Subprocess-Coverage aktivieren (parallel=true in pyproject sorgt
+    # dafuer dass mehrere subprocess-coverage-Runs nicht kollidieren).
+    # Damit traegt dieser Test zur Coverage von app.py-Reconnect-Loop
+    # bei, was sonst 35s laufendem Subprocess ohne Coverage-Wert waere.
     env = {
         **os.environ,
-        'PYTHONPATH': str(src_dir),
-        # Kein Coverage hier — der Subprocess wuerde sonst seinen
-        # eigenen .coverage.<pid> schreiben und das mit dem Parent-
-        # Test-Run kollidieren. Dieser Test braucht App.run nicht
-        # in Coverage abgedeckt (andere Tests tun das).
+        'PYTHONPATH': os.pathsep.join([str(tests_dir), str(src_dir)]),
+        'COVERAGE_PROCESS_START': str(src_dir.parent / 'pyproject.toml'),
     }
 
     proc = subprocess.Popen(

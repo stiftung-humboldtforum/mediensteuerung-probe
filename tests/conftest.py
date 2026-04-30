@@ -1,15 +1,29 @@
-"""Shared pytest fixtures.
+"""Shared pytest fixtures and pytest hooks.
 
-Most fixtures here are for the @pytest.mark.integration tests in
-test_integration.py. They expect a real MQTT broker to be reachable
-at PROBE_TEST_BROKER:PROBE_TEST_PORT (default 127.0.0.1:11883).
+The bulk of this module exists for the @pytest.mark.integration tests
+in tests/test_integration.py. Unit tests don't touch any of it.
 
-THE BROKER IS AUTO-STARTED IF NEEDED. pytest_configure checks the
-host:port and, if nothing is listening, spawns mosquitto in a
-subprocess for the duration of the test session — provided
-'mosquitto' is on $PATH. Cleanup happens via pytest_unconfigure.
+== Sections ==
+    1. Configuration   — env-vars (BROKER_HOST/PORT), worker-port-suffix
+    2. Auto-Broker     — spawn/cleanup of an ephemeral mosquitto if
+                         no external broker is reachable
+    3. Pytest hooks    — pytest_unconfigure, pytest_collection_modifyitems
+                         (the lazy auto-broker spawn lives here)
+    4. MQTT fixtures   — mqtt_subscriber (event-driven, min_count),
+                         mqtt_publisher
+    5. Probe fixture   — running_probe: spawns src/app.py as a
+                         subprocess, with subprocess-coverage hooked
+                         and PROBE_MQTT_KEEPALIVE=5 for fast Last-Will
+    6. TLS-Broker      — separate mosquitto with self-signed CA +
+                         require_certificate=true for the mTLS
+                         integration test (tests/_certs.py)
 
-So for the common case 'pytest -m integration' just works:
+== Auto-Broker behavior ==
+The auto-broker is spawned LAZILY in pytest_collection_modifyitems —
+only when the collected test set actually contains integration tests.
+For 'pytest tests/test_misc.py' (unit-only) no broker is started.
+
+So 'pytest -m integration' just works:
   - CI: apt-installed mosquitto on PATH → auto-spawned
   - macOS dev: brew install mosquitto → auto-spawned
   - User-supplied broker (e.g. staging): set PROBE_TEST_BROKER, the
@@ -33,6 +47,10 @@ import paho.mqtt.client as mqtt
 import pytest
 
 
+# =====================================================================
+# 1. Configuration
+# =====================================================================
+
 BROKER_HOST = os.environ.get('PROBE_TEST_BROKER', '127.0.0.1')
 
 def _broker_port() -> int:
@@ -51,11 +69,15 @@ def _broker_port() -> int:
 BROKER_PORT = _broker_port()
 SRC_DIR = Path(__file__).parent.parent / 'src'
 
-# Set in pytest_configure if we spawned our own broker; cleaned up in
-# pytest_unconfigure. Optional[dict] statt 'dict | None' weil das
-# PEP-604-Form auf Python 3.9 als Type-Annotation am Modul-Level einen
-# TypeError wirft (3.9 unterstuetzt es nur in Funktions-Bodies oder
-# mit 'from __future__ import annotations').
+# =====================================================================
+# 2. Auto-Broker — ephemeral mosquitto spawned for the test session
+# =====================================================================
+
+# Set in pytest_collection_modifyitems if we spawned our own broker;
+# cleaned up in pytest_unconfigure. Optional[dict] statt 'dict | None'
+# weil das PEP-604-Form auf Python 3.9 als Type-Annotation am Modul-
+# Level einen TypeError wirft (3.9 unterstuetzt es nur in Funktions-
+# Bodies oder mit 'from __future__ import annotations').
 _AUTO_BROKER: Optional[dict] = None
 
 
@@ -146,12 +168,9 @@ def _stop_auto_broker():
     _AUTO_BROKER = None
 
 
-def pytest_configure(config):
-    """Spawn an ephemeral mosquitto if no broker is up. Idempotent —
-    if a broker is already reachable, this is a no-op."""
-    global _AUTO_BROKER
-    _AUTO_BROKER = _start_auto_broker()
-
+# =====================================================================
+# 3. Pytest hooks
+# =====================================================================
 
 def pytest_unconfigure(config):
     """Clean up the auto-spawned broker (if any)."""
@@ -159,11 +178,30 @@ def pytest_unconfigure(config):
 
 
 def pytest_collection_modifyitems(config, items):
-    """Skip @pytest.mark.integration tests if no broker is reachable
-    after pytest_configure (= auto-spawn was attempted but failed,
-    typically because mosquitto isn't installed)."""
+    """Spawn the auto-broker LAZILY — only if the collected test set
+    actually contains integration tests. Saves the 1-2s broker-startup
+    overhead for unit-only test runs (e.g. `pytest tests/test_misc.py`).
+
+    If integration tests are present and no broker is reachable, try to
+    spawn one. If that also fails (mosquitto not on PATH), skip all
+    integration tests with a clear message.
+    """
+    global _AUTO_BROKER
+
+    has_integration = any('integration' in item.keywords for item in items)
+    if not has_integration:
+        return  # no integration tests selected → no broker needed
+
     if _broker_reachable(BROKER_HOST, BROKER_PORT):
-        return
+        return  # external broker available → use it
+
+    # Try to spawn one. _start_auto_broker returns None if mosquitto
+    # isn't on PATH OR if a broker became reachable in the meantime.
+    _AUTO_BROKER = _start_auto_broker()
+    if _broker_reachable(BROKER_HOST, BROKER_PORT):
+        return  # spawn succeeded
+
+    # Last resort: no broker, no mosquitto → skip integration tests.
     skip = pytest.mark.skip(
         reason=(
             f'integration: no MQTT broker at {BROKER_HOST}:{BROKER_PORT} '
@@ -176,7 +214,9 @@ def pytest_collection_modifyitems(config, items):
             item.add_marker(skip)
 
 
-# --- MQTT helper fixture --------------------------------------------------
+# =====================================================================
+# 4. MQTT-Client fixtures (subscriber + publisher)
+# =====================================================================
 
 @pytest.fixture
 def mqtt_subscriber():
@@ -259,7 +299,9 @@ def mqtt_publisher():
     client.disconnect()
 
 
-# --- Probe subprocess fixture ---------------------------------------------
+# =====================================================================
+# 5. Probe-Subprocess fixture
+# =====================================================================
 
 @pytest.fixture
 def running_probe(request, tmp_path):
@@ -356,15 +398,18 @@ def running_probe(request, tmp_path):
 
 
 def _wait_for_probe_connected(timeout: float = 10.0) -> bool:
-    """Poll any probe/+/connected = '1' within timeout."""
-    seen = []
+    """Wait for any probe/+/connected = '1' within timeout. Returns
+    immediately as soon as the message arrives (event-driven, no
+    polling)."""
+    from threading import Event
+    seen = Event()
 
     def on_connect(client, userdata, flags, reason_code, properties=None):
         client.subscribe('probe/+/connected')
 
     def on_message(client, userdata, msg):
         if msg.payload == b'1':
-            seen.append(True)
+            seen.set()
 
     client = mqtt.Client(
         callback_api_version=mqtt.CallbackAPIVersion.VERSION2,
@@ -374,17 +419,16 @@ def _wait_for_probe_connected(timeout: float = 10.0) -> bool:
     client.on_message = on_message
     client.connect(BROKER_HOST, BROKER_PORT, 60)
     client.loop_start()
-
-    deadline = time.monotonic() + timeout
-    while not seen and time.monotonic() < deadline:
-        time.sleep(0.1)
-
-    client.loop_stop()
-    client.disconnect()
-    return bool(seen)
+    try:
+        return seen.wait(timeout=timeout)
+    finally:
+        client.loop_stop()
+        client.disconnect()
 
 
-# --- TLS broker fixture (for L-T3 TLS-Pfad Integration-Test) --------------
+# =====================================================================
+# 6. TLS-Broker (separate mosquitto with self-signed CA + mTLS)
+# =====================================================================
 
 @pytest.fixture(scope='session')
 def tls_broker(tmp_path_factory):

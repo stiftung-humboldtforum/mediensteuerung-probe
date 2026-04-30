@@ -7,7 +7,8 @@ Hierarchy:
         └─ server.crt (CN=localhost, SAN=DNS:localhost,IP:127.0.0.1)
         └─ client.crt (CN=test-client)
 
-All certs valid for 1 day — test-only.
+All certs valid for 30 days — test-only. (1 day was originally chosen
+but breaks long-cached CI environments / weekly cron-triggered runs.)
 """
 import datetime
 import ipaddress
@@ -53,7 +54,7 @@ def make_ca_and_certs(out_dir: Path) -> dict:
     out_dir.mkdir(parents=True, exist_ok=True)
 
     now = datetime.datetime.now(datetime.timezone.utc)
-    valid_until = now + datetime.timedelta(days=1)
+    valid_until = now + datetime.timedelta(days=30)
 
     # --- CA ---------------------------------------------------------------
     ca_key = _new_key()

@@ -24,16 +24,19 @@
 
 FROM python:3.13-slim
 
-# mosquitto = for the auto-broker fixture
+# mosquitto = the binary on PATH for the auto-broker fixture
 # mosquitto-clients = for manual mosquitto_sub/pub debugging inside container
 # git = some setuptools paths still need it during install
+#
+# NOTE: python:3.13-slim has no systemd, so apt's mosquitto post-install
+# can't auto-start the daemon — which is exactly what we want. The
+# auto-broker fixture spawns its own mosquitto with its own config.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
        mosquitto \
        mosquitto-clients \
        git \
-    && rm -rf /var/lib/apt/lists/* \
-    && systemctl disable mosquitto 2>/dev/null || true
+    && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /repo
 
