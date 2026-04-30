@@ -17,22 +17,58 @@ Humboldt-Probe is a software component designed to be installed on computers wit
 ```
 humboldt-probe/
   src/
-    app.py              # Main entry point (CLI, MQTT client, lifecycle)
-    probe.py            # Probe thread (periodic sensor polling, command handling)
+    app.py                       # Lifecycle: CLI, MQTT client, reconnect/backoff loop, sd_notify
+    probe.py                     # Probe thread (periodic polling + manager-command dispatch)
     methods/
-      __init__.py       # Capabilities (shutdown, reboot, mute, unmute, ping)
-      sensors.py        # Probe methods (temperatures, fans, uptime, display, ...)
+      __init__.py                # Platform-dispatch + common sensors (ping, boot_time, mpv_file_pos_sec, easire) + SENSORS/COMMANDS whitelists
+      _linux.py                  # Linux impl (wpctl, xrandr, psutil, /proc/uptime)
+      _win32.py                  # Windows impl (pycaw, LibreHardwareMonitor, Win32 EnumDisplaySettingsW)
+      _stub.py                   # Fallback for unsupported platforms (macOS dev)
     misc/
-      __init__.py       # Config parser, logger, response helpers
-  lib/
-    win32/              # LibreHardwareMonitor DLLs (Windows only)
+      __init__.py                # Config parser, JSON envelope, payload validation
+
   tests/
-    conftest.py         # Test configuration (sys.path setup)
-    test_misc.py        # Tests for config parsing, response helpers
-    test_methods.py     # Tests for sensor methods, call_method
-    test_probe.py       # Tests for probe init, callbacks, security
-  requirements.txt
-  userconfig.example.txt
+    conftest.py                  # Auto-Broker, MQTT fixtures, running_probe, tls_broker (see top-of-file sections)
+    sitecustomize.py             # subprocess-coverage hook (Probe-subprocess covered too)
+    _certs.py                    # ephemeral CA + server + client certs for TLS test
+    test_misc.py                 # 18 tests: config parser, JSON envelope, payload validation
+    test_methods.py              # 20 tests: Linux paths + common sensors + display parser
+    test_methods_win32.py        # 11 tests: Windows paths via mocks (pycaw, LHM, ctypes)
+    test_probe.py                # 30 tests: Probe class + threading + whitelist gates
+    test_app.py                  # 12 tests: FQDN caching, --no_tls banner, sd_notify sequences
+    test_integration.py          # 9 tests: end-to-end against real Mosquitto
+
+  scripts/
+    smoke-test.sh                # Pre-/post-deploy MQTT verification (7 checks)
+    hardware-test-linux.sh       # Hardware sensors via SSH after Linux deploy
+    hardware-test-windows.ps1    # Hardware sensors via RDP/PSRemoting after Windows deploy
+    install-windows.ps1          # Idempotent NSSM service setup
+    mpv_control.example.sh       # Reference impl for the optional mpv_file_pos_sec helper
+
+  systemd/humboldt-probe.service # Reference unit (Type=notify, WatchdogSec=30s)
+
+  lib/win32/                     # LibreHardwareMonitorLib.dll + HidSharp.dll + LICENSE.txt
+  mosquitto/test.conf            # mosquitto config used by docker-compose.test.yml
+
+  docs/
+    testing.md                   # Test strategy: unit / integration / hardware / CI
+    migration-from-avorus.md     # Historical fork log (one-shot, not a living changelog)
+
+  .github/
+    workflows/test.yml           # Matrix Linux 3.9-3.13 + macOS + Windows + integration + lint
+    dependabot.yml               # monthly pip + actions updates
+
+  Dockerfile.linux-test          # Linux-codepath verification on macOS-Dev (no PipeWire/X11 — see docs/testing.md §10)
+  docker-compose.linux-test.yml  #     ↳ wrapper for the above
+  docker-compose.test.yml        # Standalone Mosquitto for ad-hoc 'pytest -m integration'
+
+  pyproject.toml                 # project metadata + pytest/coverage config
+  requirements.txt               # runtime deps (Linux + Windows markers)
+  requirements-dev.txt           # adds pytest, coverage, pip-tools, cryptography
+  requirements.lock.txt          # transitive lock via pip-compile
+  userconfig.example.txt         # Sample PROBE_METHODS / PROBE_CAPABILITIES
+  CHANGELOG.md                   # Keep-a-Changelog format
+  LICENSE                        # ⚠ placeholder — Stiftung action required
 ```
 
 ## MQTT Topics
@@ -294,68 +330,43 @@ NSSM automatically restarts the probe on crash and starts it on boot.
 
 ## Local Testing
 
-### 1. Install Mosquitto
-
-**macOS:**
-```bash
-brew install mosquitto
-```
-
-**Linux (Debian/Ubuntu):**
-```bash
-sudo apt install mosquitto mosquitto-clients
-```
-
-**Windows:**
-```powershell
-winget install EclipseFoundation.Mosquitto
-```
-
-### 2. Start the broker
+The test suite handles its own MQTT broker — install
+`mosquitto` once and `pytest` does the rest:
 
 ```bash
-mosquitto -p 1883 -v
+# macOS:        brew install mosquitto
+# Debian/Ubu:   sudo apt install mosquitto mosquitto-clients
+# Windows:      winget install EclipseFoundation.Mosquitto
+
+pip install -r requirements-dev.txt
+pytest                       # 102 tests, ~50s — Auto-Broker spawns Mosquitto if needed
+pytest -m integration        # only the 9 integration tests (real Mosquitto roundtrips)
 ```
 
-### 3. Start the probe
+For ad-hoc manual exploration (Probe + your own MQTT-Explorer
+session), see [`docs/testing.md` §3b](docs/testing.md).
+
+### Real-hardware verification
+
+Probe-Code uses platform-specific sensors — `methods/_stub.py` no-ops
+on macOS-Dev. To verify the real Linux/Windows codepath you need
+either Docker (Linux only, code-paths but no audio/display hardware)
+or a VM. **Quick instructions in [`docs/quick-test-real-hardware.md`](docs/quick-test-real-hardware.md).**
+
+## Remote Development (Mac to Linux/Windows)
+
+With SSH (Linux + OpenSSH on Windows) you can iterate from your dev
+machine:
 
 ```bash
-python src/app.py \
-    --config_file userconfig.txt \
-    --mqtt_hostname <broker-ip> \
-    --no_tls \
-    --loglevel DEBUG
-```
+# Sync the working tree
+rsync -av --exclude='.venv' --exclude='__pycache__' . user@kiosk-01:/opt/humboldt-probe/
 
-### 4. Monitor sensor data
+# Restart the service after a change
+ssh user@kiosk-01 "sudo systemctl restart humboldt-probe"
+ssh win-kiosk-01 "nssm restart HumboldtProbe"   # via Win-OpenSSH
 
-With MQTT Explorer: connect to `<broker-ip>:1883`. All topics appear under `probe/<hostname>/`.
-
-Or via command line:
-
-```bash
-mosquitto_sub -h <broker-ip> -p 1883 -t 'probe/#' -v
-```
-
-### 5. Send commands
-
-```bash
-mosquitto_pub -h <broker-ip> -p 1883 -t 'manager/<hostname>/mute' -m ''
-mosquitto_pub -h <broker-ip> -p 1883 -t 'manager/<hostname>/unmute' -m ''
-mosquitto_pub -h <broker-ip> -p 1883 -t 'manager/<hostname>/reboot' -m ''
-```
-
-## Remote Development (Mac to Windows)
-
-With OpenSSH enabled on the Windows target, you can deploy changes directly:
-
-```bash
-# Deploy source files
-scp -r src/* user@<windows-ip>:C:/path/to/humboldt-probe/src/
-
-# Restart the service
-ssh user@<windows-ip> "nssm restart HumboldtProbe"
-
-# Test individual methods
-ssh user@<windows-ip> "cd C:\path\to\humboldt-probe\src && python -c \"from methods.sensors import temperatures; print(temperatures())\""
+# One-off sensor check on the real hardware
+ssh user@kiosk-01 "cd /opt/humboldt-probe && bash scripts/hardware-test-linux.sh"
+ssh win-kiosk-01 "cd C:\\humboldt-probe; powershell .\\scripts\\hardware-test-windows.ps1"
 ```
