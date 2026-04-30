@@ -10,7 +10,7 @@ level bugs that mock-based unit tests cannot:
   - topic subscription patterns (noLocal, wildcards)
   - Last-Will publishing on unclean disconnect
   - command-response roundtrip via real broker
-  - reconnect after broker outage
+  - exponential backoff on broker outage
 
 All tests in this file are auto-skipped if no broker is reachable —
 see conftest.py:pytest_collection_modifyitems.
@@ -24,8 +24,12 @@ Run in CI: see .github/workflows/test.yml integration job.
 """
 import json
 import os
+import re
 import socket
+import subprocess
+import sys
 import time
+from pathlib import Path
 
 import paho.mqtt.client as mqtt
 import pytest
@@ -184,11 +188,191 @@ def test_last_will_published_on_unclean_disconnect(running_probe, mqtt_subscribe
     assert seen_will, 'Last-Will connected="0" never arrived'
 
 
+# --- Reconnect / Backoff (no broker = no auto-skip relevant) --------------
+
+def _find_free_port() -> int:
+    """Pick a TCP port that's currently free (no listener)."""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.bind(('127.0.0.1', 0))
+        return s.getsockname()[1]
+
+
+def test_probe_exponential_backoff_on_dead_broker(tmp_path):
+    """Probe gegen einen Port wo nichts laeuft → App.run muss
+    exponentiell zurückfallende Reconnect-in-Ns Logs erzeugen
+    (5 → 10 → 20 → ...).
+
+    Independent vom Auto-Broker — wir starten den Probe-Subprocess
+    selbst gegen einen unbenutzten Port.
+    """
+    dead_port = _find_free_port()
+    config_file = tmp_path / 'userconfig.txt'
+    config_file.write_text(
+        'PROBE_METHODS="ping"\nPROBE_CAPABILITIES="ping"\n'
+    )
+    src_dir = Path(__file__).parent.parent / 'src'
+    env = {
+        **os.environ,
+        'PYTHONPATH': str(src_dir),
+        # Kein Coverage hier — der Subprocess wuerde sonst seinen
+        # eigenen .coverage.<pid> schreiben und das mit dem Parent-
+        # Test-Run kollidieren. Dieser Test braucht App.run nicht
+        # in Coverage abgedeckt (andere Tests tun das).
+    }
+
+    proc = subprocess.Popen(
+        [
+            sys.executable, str(src_dir / 'app.py'),
+            '--config_file', str(config_file),
+            '--mqtt_hostname', '127.0.0.1',
+            '--mqtt_port', str(dead_port),
+            '--no_tls',
+            '--loglevel', 'INFO',
+        ],
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        bufsize=1,
+    )
+
+    backoffs = []
+    deadline = time.monotonic() + 35
+    try:
+        while len(backoffs) < 3 and time.monotonic() < deadline:
+            line = proc.stdout.readline()
+            if not line:
+                if proc.poll() is not None:
+                    pytest.fail(f'probe-process exited unexpectedly: rc={proc.returncode}')
+                continue
+            m = re.search(r'(?:Reconnect in|retrying in) (\d+)s', line)
+            if m:
+                backoffs.append(int(m.group(1)))
+    finally:
+        proc.terminate()
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait()
+
+    assert len(backoffs) >= 3, (
+        f'expected at least 3 backoff messages, got: {backoffs}. '
+        f'(BACKOFF_INITIAL=5s, so ≥3 should arrive within 35s)'
+    )
+    # Exponentielle Progression — jeder ≥ vorheriger
+    assert backoffs[0] <= backoffs[1] <= backoffs[2], (
+        f'backoff not monotonic: {backoffs}'
+    )
+    # Erster sollte nahe BACKOFF_INITIAL=5 sein (kann 5 oder 10 sein
+    # je nachdem ob die erste connect-attempt selbst sleep'te)
+    assert backoffs[0] in (5, 10), f'first backoff should be 5 or 10, got {backoffs[0]}'
+    # Wachstum erkennbar (mind. einer ist > als der erste)
+    assert max(backoffs) > backoffs[0], (
+        f'no growth observed: {backoffs}'
+    )
+
+
+# --- TLS / mTLS (L-T3) ----------------------------------------------------
+
+def test_probe_connects_via_tls(tls_broker, tmp_path):
+    """Verifies the production-relevant `--ca_certificate / --certfile /
+    --keyfile` codepath in App._setup. Uses a separate TLS-broker with
+    require_certificate=true (= mTLS), so the probe MUST present its
+    client cert or the connection is rejected.
+
+    Catches: TLS context misconfiguration, cert-path file-not-found,
+    paho-mqtt tls_set() API drift on future libmosquitto/openssl
+    upgrades, certificate-validation regressions.
+    """
+    config_file = tmp_path / 'userconfig.txt'
+    config_file.write_text(
+        'PROBE_METHODS="ping"\nPROBE_CAPABILITIES="ping"\n'
+    )
+    src_dir = Path(__file__).parent.parent / 'src'
+    tests_dir = Path(__file__).parent
+    env = {
+        **os.environ,
+        'PYTHONPATH': os.pathsep.join([str(tests_dir), str(src_dir)]),
+        'COVERAGE_PROCESS_START': str(src_dir.parent / 'pyproject.toml'),
+        'PROBE_MQTT_KEEPALIVE': '5',
+    }
+
+    proc = subprocess.Popen(
+        [
+            sys.executable, str(src_dir / 'app.py'),
+            '--config_file', str(config_file),
+            '--mqtt_hostname', tls_broker.host,
+            '--mqtt_port', str(tls_broker.port),
+            '--ca_certificate', tls_broker.ca,
+            '--certfile', tls_broker.client_cert,
+            '--keyfile', tls_broker.client_key,
+            # bewusst KEIN --no_tls — das ist genau der Pfad den wir testen
+            '--loglevel', 'WARNING',
+        ],
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+    )
+
+    # Subscribe-Client mit denselben certs gegen den TLS-Broker
+    seen_connected = []
+
+    def on_connect(client, userdata, flags, reason_code, properties=None):
+        client.subscribe('probe/+/connected')
+
+    def on_message(client, userdata, msg):
+        if msg.payload == b'1':
+            seen_connected.append(True)
+
+    sub = mqtt.Client(
+        callback_api_version=mqtt.CallbackAPIVersion.VERSION2,
+        client_id='pytest-tls-sub',
+    )
+    sub.on_connect = on_connect
+    sub.on_message = on_message
+    sub.tls_set(
+        ca_certs=tls_broker.ca,
+        certfile=tls_broker.client_cert,
+        keyfile=tls_broker.client_key,
+    )
+
+    try:
+        sub.connect(tls_broker.host, tls_broker.port, 30)
+        sub.loop_start()
+
+        deadline = time.monotonic() + 15
+        while not seen_connected and time.monotonic() < deadline:
+            if proc.poll() is not None:
+                stdout = proc.stdout.read() if proc.stdout else ''
+                pytest.fail(
+                    f'probe-process exited unexpectedly (rc={proc.returncode}). '
+                    f'Output:\n{stdout}'
+                )
+            time.sleep(0.2)
+
+        assert seen_connected, (
+            'probe never published connected="1" via TLS — TLS-handshake '
+            'or mTLS-cert-presentation likely failed. '
+            f'Probe output:\n{proc.stdout.read() if proc.stdout else ""}'
+        )
+    finally:
+        sub.loop_stop()
+        sub.disconnect()
+        proc.terminate()
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait()
+
+
 # --- Helpers --------------------------------------------------------------
 
 def _read_probe_fqdn(mqtt_subscriber) -> str:
     """Discover the probe's actual FQDN by reading any retained probe-topic."""
-    msgs = mqtt_subscriber('probe/+/connected', timeout=2)
+    msgs = mqtt_subscriber('probe/+/connected', timeout=5, min_count=1)
     if not msgs:
         pytest.fail('no probe online — running_probe fixture failed')
     # topic = 'probe/<fqdn>/connected'

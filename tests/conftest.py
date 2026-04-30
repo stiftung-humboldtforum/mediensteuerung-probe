@@ -382,3 +382,95 @@ def _wait_for_probe_connected(timeout: float = 10.0) -> bool:
     client.loop_stop()
     client.disconnect()
     return bool(seen)
+
+
+# --- TLS broker fixture (for L-T3 TLS-Pfad Integration-Test) --------------
+
+@pytest.fixture(scope='session')
+def tls_broker(tmp_path_factory):
+    """Spawns a separate TLS-enabled mosquitto on a free port for the
+    duration of the test session. Generates self-signed CA + server +
+    client certs via cryptography lib (no openssl-CLI dependency).
+
+    Yields a SimpleNamespace with .host, .port, .ca, .client_cert,
+    .client_key paths. Caller can use these as App-CLI args and as
+    paho-mqtt tls_set() inputs.
+
+    Skips the dependent test if mosquitto is not on PATH.
+    """
+    from types import SimpleNamespace
+    sys.path.insert(0, str(Path(__file__).parent))
+    import _certs  # type: ignore[import-not-found]
+
+    mosquitto_bin = shutil.which('mosquitto')
+    if not mosquitto_bin:
+        pytest.skip('mosquitto not on PATH — TLS-integration test requires it')
+
+    cert_dir = tmp_path_factory.mktemp('tls-certs')
+    paths = _certs.make_ca_and_certs(cert_dir)
+
+    # Pick a free port distinct from BROKER_PORT
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.bind((BROKER_HOST, 0))
+        tls_port = s.getsockname()[1]
+
+    # Mosquitto-config mit TLS + require_certificate (mTLS).
+    config_dir = tempfile.mkdtemp(prefix='humboldt-tls-broker-')
+    config_path = os.path.join(config_dir, 'broker.conf')
+    log_path = os.path.join(config_dir, 'mosquitto.log')
+    with open(config_path, 'w') as f:
+        f.write(
+            f'listener {tls_port} {BROKER_HOST}\n'
+            f'cafile {paths["ca"]}\n'
+            f'certfile {paths["server_cert"]}\n'
+            f'keyfile {paths["server_key"]}\n'
+            'require_certificate true\n'
+            'allow_anonymous true\n'
+            'persistence false\n'
+        )
+
+    log = open(log_path, 'w')
+    proc = subprocess.Popen(
+        [mosquitto_bin, '-c', config_path],
+        stdout=log,
+        stderr=subprocess.STDOUT,
+    )
+
+    # Wait for the TLS broker to accept connections (TCP-bound = ready)
+    deadline = time.monotonic() + 6.0
+    while time.monotonic() < deadline:
+        if _broker_reachable(BROKER_HOST, tls_port):
+            break
+        if proc.poll() is not None:
+            log.close()
+            with open(log_path) as f:
+                log_content = f.read()
+            shutil.rmtree(config_dir, ignore_errors=True)
+            pytest.fail(
+                f'TLS-mosquitto exited rc={proc.returncode}:\n{log_content}'
+            )
+        time.sleep(0.1)
+    else:
+        proc.terminate()
+        log.close()
+        shutil.rmtree(config_dir, ignore_errors=True)
+        pytest.fail(f'TLS-mosquitto not reachable on {BROKER_HOST}:{tls_port}')
+
+    handle = SimpleNamespace(
+        host=BROKER_HOST,
+        port=tls_port,
+        ca=str(paths['ca']),
+        client_cert=str(paths['client_cert']),
+        client_key=str(paths['client_key']),
+    )
+
+    yield handle
+
+    proc.terminate()
+    try:
+        proc.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.wait()
+    log.close()
+    shutil.rmtree(config_dir, ignore_errors=True)
