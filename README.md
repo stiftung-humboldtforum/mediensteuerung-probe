@@ -159,8 +159,8 @@ docker compose -f docker-compose.linux-test.yml run --rm probe-test
 ```
 
 See [`docs/testing.md`](docs/testing.md) for the full testing
-strategy, including hardware-smoke-tests, VM setup for Windows
-verification, and CI matrix.
+strategy and [`docs/quick-test-real-hardware.md`](docs/quick-test-real-hardware.md)
+for the dev → Linux-PC → Windows-PC workflow.
 
 ### Reproducible builds (`pip-compile`)
 
@@ -349,9 +349,11 @@ session), see [`docs/testing.md` §3b](docs/testing.md).
 ### Real-hardware verification
 
 Probe-Code uses platform-specific sensors — `methods/_stub.py` no-ops
-on macOS-Dev. To verify the real Linux/Windows codepath you need
-either Docker (Linux only, code-paths but no audio/display hardware)
-or a VM. **Quick instructions in [`docs/quick-test-real-hardware.md`](docs/quick-test-real-hardware.md).**
+on macOS-Dev. Production-near tests laufen direkt auf einem Linux-PC
+und einem Windows-PC (jeweils `git clone` + `pip install` + `pytest` +
+`hardware-test-*`). Optional Docker für einen schnellen Linux-
+Sanity-Check ohne PC-Wechsel. Anleitung:
+**[`docs/quick-test-real-hardware.md`](docs/quick-test-real-hardware.md)**.
 
 ## Remote Development (Mac to Linux/Windows)
 

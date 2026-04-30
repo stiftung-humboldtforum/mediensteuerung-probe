@@ -1,118 +1,78 @@
 # Quick-Test gegen reale Hardware
 
-Drei Stufen, jeweils so nah an Production wie sinnvoll. macOS-Dev kann
-alle drei vom selben Mac aus auslösen.
+Workflow: Dev auf macOS, dann pro Plattform am jeweiligen Rechner
+laufen lassen. Optional Docker als CI-äquivalentes Zwischending.
 
 ---
 
-## Stufe 1 — Linux-Codepath (Docker, ~30s Setup)
-
-**Was es testet:** Probe-Code läuft auf echtem Linux-Python 3.13
-(nicht macOS-Stub), paho-mqtt v2 + Auto-Broker funktionieren auf
-Linux, alle 102 Tests grün.
-
-**Was es nicht testet:** kein PipeWire / kein X-Server / keine echten
-Hardware-Sensoren — `wpctl`, `xrandr` und psutil-Sensors fallen.
+## Auf deinem Linux-PC
 
 ```bash
-# einmalig (~30s, baut Image)
-docker compose -f docker-compose.linux-test.yml build
+git clone https://github.com/stiftung-humboldtforum/mediensteuerung-probe.git
+cd mediensteuerung-probe
 
-# Tests laufen lassen
+# einmalig
+sudo apt install -y python3-pip mosquitto pipewire wireplumber wpctl x11-utils
+pip install -r requirements-dev.txt
+
+# Tests
+pytest                           # 102 Tests — Auto-Broker, alle Code-Pfade
+bash scripts/hardware-test-linux.sh    # echte wpctl/xrandr/psutil-Sensoren
+```
+
+`hardware-test-linux.sh` ist der invasive Teil — er togglet Audio.
+Mit `SKIP_AUDIO=1 bash scripts/hardware-test-linux.sh` ohne Audio-
+Toggle laufen.
+
+---
+
+## Auf deinem Windows-PC
+
+```powershell
+git clone https://github.com/stiftung-humboldtforum/mediensteuerung-probe.git
+cd mediensteuerung-probe
+
+# einmalig (als Admin)
+winget install Python.Python.3.13 --scope machine
+winget install NSSM.NSSM EclipseFoundation.Mosquitto Git.Git
+pip install -r requirements-dev.txt
+
+# Tests (PowerShell als Administrator — LHM braucht's für Sensoren)
+pytest                                           # 102 Tests
+.\scripts\hardware-test-windows.ps1              # echtes pycaw + LHM + Win32-Display
+.\scripts\install-windows.ps1 -MqttHostname 127.0.0.1 -NoTls   # Service-Install testen
+```
+
+`-SkipAudio` an `hardware-test-windows.ps1` falls Live-Betrieb läuft.
+
+---
+
+## Auf macOS-Dev (kein Wechsel zum Linux/Windows-PC)
+
+Schneller Sanity-Check vor dem Übertragen — Linux-Code-Pfad in Docker:
+
+```bash
 docker compose -f docker-compose.linux-test.yml run --rm probe-test pytest
 ```
 
----
+Verifiziert: Code läuft auf echtem Linux-Python, paho-mqtt v2 + Auto-
+Broker funktionieren. **Nicht** verifiziert: PipeWire/X11/Hardware-
+Sensoren — dafür der Linux-PC oben.
 
-## Stufe 2 — Linux mit Hardware (UTM/Multipass-VM, ~10min Setup, dann reusable)
-
-**Was es zusätzlich testet:** echte PipeWire-Audio (mute/unmute), echtes
-xrandr (Display-Mode), psutil-Hardware-Sensoren (Temps/Fans).
-
-### Setup (einmalig)
-
-**Option A: UTM** (https://mac.getutm.app, gratis, Apple-Hypervisor):
-1. UTM laden → "Create new VM" → Linux → Ubuntu 24.04 Desktop ARM ISO
-2. 2 GB RAM, 20 GB Disk, Ubuntu Standard-Setup durchklicken
-3. In der VM: `sudo apt install pipewire wireplumber wpctl x11-utils python3-pip mosquitto git`
-
-**Option B: Multipass** (`brew install multipass`, schneller, aber kein Desktop):
-```bash
-multipass launch --name kiosk-vm --cpus 2 --memory 2G --disk 20G 24.04
-multipass exec kiosk-vm -- sudo apt install -y pipewire wireplumber wpctl python3-pip mosquitto git
-# Audio-Tests gehen hier nicht (kein PipeWire-User-Session) — nur Display via xvfb
-```
-
-### Tests laufen
-
-```bash
-# Repo in die VM bringen
-rsync -av --exclude='.venv' --exclude='__pycache__' . kiosk-vm:/home/ubuntu/humboldt-probe/
-
-# Tests + Hardware-Smoke
-ssh kiosk-vm 'cd ~/humboldt-probe && pip install -r requirements-dev.txt && pytest && bash scripts/hardware-test-linux.sh'
-```
-
-`scripts/hardware-test-linux.sh` verifiziert die echten wpctl/xrandr/
-psutil-Sensoren — auf macOS würde das alles fail. Hier muss es grün sein.
+Pure Unit + Integration auf macOS direkt geht auch (`brew install
+mosquitto && pytest`), aber `methods/_stub.py` greift dort statt
+`_linux.py`/`_win32.py`.
 
 ---
 
-## Stufe 3 — Windows mit Hardware (UTM/Parallels-VM)
+## TL;DR
 
-**Was es zusätzlich testet:** pycaw (Audio-Mute via COM), LibreHardwareMonitor
-(CPU/GPU-Temps + -Fans), Win32 EnumDisplaySettingsW, NSSM-Service-Install.
+| Wo                | Was wird getestet                                 | Setup        | Run-Zeit |
+|-------------------|---------------------------------------------------|--------------|----------|
+| macOS-Dev (direkt)| Probe-Logik, MQTT-Roundtrips, _stub-Pfad          | brew once    | ~50s     |
+| macOS via Docker  | Probe-Logik, MQTT, _linux.py-Imports              | docker once  | ~50s     |
+| **Linux-PC**      | + wpctl, xrandr, psutil-Hardware-Sensoren         | apt once     | ~50s + HW-Tests |
+| **Windows-PC**    | + pycaw, LibreHardwareMonitor, Win32, NSSM        | winget once  | ~50s + HW-Tests |
 
-### Setup (einmalig)
-
-**Option A: UTM mit Windows 11 ARM** (free, Apple Silicon):
-1. Windows 11 ARM ISO über https://mac.getutm.app/gallery laden
-2. UTM → "Create new VM" → Windows → ISO auswählen → 4 GB RAM, 64 GB Disk
-3. Windows-Standard-Setup durchklicken (Local Account ohne MS-Login geht)
-4. In der VM (PowerShell als Admin):
-   ```powershell
-   winget install Python.Python.3.13 --scope machine
-   winget install NSSM.NSSM
-   winget install EclipseFoundation.Mosquitto
-   winget install Git.Git
-   ```
-
-**Option B: Parallels Desktop** (kommerziell, beste Hardware-Pass-Through):
-- Audio-Pass-Through funktioniert robuster als UTM → pycaw kann echte
-  Mute-Toggle machen
-
-### Tests laufen
-
-```powershell
-# Repo in die VM (oder via Shared Folder)
-git clone https://github.com/stiftung-humboldtforum/mediensteuerung-probe.git
-cd mediensteuerung-probe
-pip install -r requirements-dev.txt
-
-# Pytest läuft die Unit-Tests + die _win32-Mock-Tests gegen das echte pycaw/LHM
-pytest
-
-# Hardware-Smoke gegen die echte Hardware (als Admin starten — LHM braucht es)
-.\scripts\hardware-test-windows.ps1
-
-# Service-Install testen (idempotent, kann gestoppt werden)
-.\scripts\install-windows.ps1 -MqttHostname 127.0.0.1 -NoTls
-nssm status HumboldtProbe
-nssm stop HumboldtProbe
-```
-
----
-
-## TL;DR Cheat Sheet
-
-| Was du wissen willst                          | Stufe | Setup-Zeit | Run-Zeit |
-|-----------------------------------------------|-------|------------|----------|
-| "Läuft mein Code auf Linux?"                  | 1     | 30 s       | 50 s     |
-| "Funktionieren wpctl/xrandr/psutil auf Linux?" | 2     | 10 min einmalig | 1 min |
-| "Funktionieren pycaw + LHM auf Windows?"       | 3     | 30 min einmalig | 1 min |
-
-Stufe 1 → einfach `docker compose ... run`. Stufe 2 + 3 brauchen einmal
-VM-Setup (`mac.getutm.app`), danach reusable.
-
-**Volltest** (alle drei Stufen) ist ~3 Minuten Run-Zeit nach Setup.
-Empfohlen vor jedem signifikanten Push.
+Vor jedem signifikanten Push: macOS oder Docker reichen. Vor jedem
+Deploy auf den Kiosk: Linux-PC + Windows-PC einmal durchlaufen lassen.
