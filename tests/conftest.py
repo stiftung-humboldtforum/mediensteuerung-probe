@@ -34,7 +34,21 @@ import pytest
 
 
 BROKER_HOST = os.environ.get('PROBE_TEST_BROKER', '127.0.0.1')
-BROKER_PORT = int(os.environ.get('PROBE_TEST_PORT', '11883'))
+
+def _broker_port() -> int:
+    """Pick a unique port per pytest-xdist worker so parallel test
+    sessions don't collide on the same auto-broker. Falls back to the
+    user-supplied PROBE_TEST_PORT or 11883 when no xdist is active."""
+    base = int(os.environ.get('PROBE_TEST_PORT', '11883'))
+    worker = os.environ.get('PYTEST_XDIST_WORKER', '')
+    if worker.startswith('gw'):
+        try:
+            return base + int(worker[2:])
+        except ValueError:
+            pass
+    return base
+
+BROKER_PORT = _broker_port()
 SRC_DIR = Path(__file__).parent.parent / 'src'
 
 # Set in pytest_configure if we spawned our own broker; cleaned up in
@@ -280,9 +294,18 @@ def running_probe(request, tmp_path):
     # kickt erste raus).
     fqdn = f'integration-test-{os.getpid()}-{id(tmp_path)}'
 
+    # tests/-Verzeichnis auf PYTHONPATH damit der Subprocess das
+    # tests/sitecustomize.py findet, das den COVERAGE_PROCESS_START-
+    # Hook installiert. SRC_DIR fuer den eigentlichen Probe-Code.
+    tests_dir = Path(__file__).parent
     env = {
         **os.environ,
-        'PYTHONPATH': str(SRC_DIR),
+        'PYTHONPATH': os.pathsep.join([str(tests_dir), str(SRC_DIR)]),
+        # Subprocess-Coverage: zeigt sitecustomize an pyproject's
+        # [tool.coverage.run]-Konfig. parallel=true sorgt dafuer dass
+        # die Daten in .coverage.<pid> Fragmenten landen, die pytest-cov
+        # via combine zusammenfuehrt.
+        'COVERAGE_PROCESS_START': str(Path(__file__).parent.parent / 'pyproject.toml'),
         # Kurzes MQTT-Keepalive (5s) damit der Last-Will-Test nicht
         # 90s warten muss bis der Broker die Session als tot deklariert.
         'PROBE_MQTT_KEEPALIVE': os.environ.get('PROBE_MQTT_KEEPALIVE', '5'),

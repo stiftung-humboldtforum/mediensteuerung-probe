@@ -128,6 +128,10 @@ class App:
             except Exception as e:
                 logger.exception(e)
                 logger.warning('Setup failed, retrying in %ds', backoff)
+                if self.notify_enabled:
+                    detail = f'{type(e).__name__}: {e}'[:200]
+                    self.notify.status(f'Setup failed: {detail}')
+                    self.notify.notify()
                 time.sleep(backoff)
                 backoff = min(backoff * 2, self.BACKOFF_MAX)
                 continue

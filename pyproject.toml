@@ -68,12 +68,19 @@ markers = [
 [tool.coverage.run]
 source = ["src"]
 branch = true
-omit = [
-    # Plattform-Module die auf macOS-CI nie ausgefuehrt werden — fuer
-    # ehrliche Coverage-Zahlen rauslassen, sonst sieht's aus als waere
-    # die Linux-Codebase 0% covered wenn macOS-CI laeuft.
-    "src/methods/_win32.py",
-]
+# Subprocess-Coverage: parallel=true erlaubt mehrere coverage-runs in
+# parallelen Prozessen ihre Daten nach .coverage.<pid> zu schreiben,
+# pytest-cov macht am Ende ein 'coverage combine'. Das fängt die
+# Coverage von src/app.py auf, das in Integration-Tests via
+# subprocess.Popen gestartet wird (siehe tests/sitecustomize.py).
+parallel = true
+sigterm = true
+# _win32.py wird seit L-T12 via Mock-Tests in test_methods_win32.py
+# abgedeckt — nicht mehr aus Coverage ausgenommen.
+
+[tool.coverage.paths]
+# fuer 'coverage combine' wenn subprocess-CWD anders ist als pytest-CWD
+source = ["src", "*/src"]
 
 [tool.coverage.report]
 exclude_lines = [

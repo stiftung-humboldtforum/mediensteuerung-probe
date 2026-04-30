@@ -3,7 +3,7 @@ import logging
 
 import pytest
 from click.testing import CliRunner
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from app import App, FqdnChanged, main
 
@@ -117,3 +117,121 @@ def test_backoff_constants():
     # Doubling stays within MAX
     capped = min(App.BACKOFF_INITIAL * 2 ** 10, App.BACKOFF_MAX)
     assert capped == App.BACKOFF_MAX
+
+
+# --- sd_notify status sequence --------------------------------------------
+
+def _make_notify_mock():
+    """Returns a mock that mimics sd_notify.Notifier — enabled() always
+    returns True so App treats it as 'systemd is watching'."""
+    notify = MagicMock()
+    notify.enabled.return_value = True
+    return notify
+
+
+def test_notify_status_sequence_on_setup_failure():
+    """When _setup() raises (e.g. TLS-cert missing), App.run should NOT
+    call notify.ready() (we never reached connected) — only the
+    'Setup failed: <type>' status update.
+    """
+    notify = _make_notify_mock()
+    app = _make_app(notify=notify)
+
+    # Make _setup raise on first call so run-loop hits the exception
+    # path immediately. Then break out of the infinite loop by raising
+    # KeyboardInterrupt on the second iteration's sleep.
+    setup_calls = []
+
+    def _failing_setup():
+        setup_calls.append(1)
+        if len(setup_calls) >= 2:
+            raise KeyboardInterrupt
+        raise RuntimeError('TLS handshake failed')
+
+    with patch.object(app, '_setup', side_effect=_failing_setup), \
+         patch('app.time.sleep'):  # skip backoff sleep
+        with pytest.raises(KeyboardInterrupt):
+            app.run()
+
+    # ready() should NOT have been called — we never reached connected
+    notify.ready.assert_not_called()
+    # status() called with 'Setup failed: RuntimeError: TLS handshake failed'
+    status_calls = [c.args[0] for c in notify.status.call_args_list]
+    assert any('Setup failed' in s and 'RuntimeError' in s for s in status_calls), \
+        f'expected Setup-failed-status with RuntimeError; got: {status_calls}'
+
+
+def test_notify_status_includes_exception_type_and_message():
+    """notify.status('Failed: ...') must contain the exception class name
+    AND a snippet of the message — Operator can debug from the systemd
+    status line alone (S-R1 / N7)."""
+    notify = _make_notify_mock()
+    app = _make_app(notify=notify)
+
+    raised = []
+
+    def _failing_setup():
+        raised.append(1)
+        if len(raised) >= 2:
+            raise KeyboardInterrupt
+        raise ConnectionRefusedError('broker dead at 192.0.2.1:1883')
+
+    with patch.object(app, '_setup', side_effect=_failing_setup), \
+         patch('app.time.sleep'):
+        with pytest.raises(KeyboardInterrupt):
+            app.run()
+
+    status_calls = [c.args[0] for c in notify.status.call_args_list]
+    failed_status = next((s for s in status_calls if 'failed' in s.lower()), None)
+    assert failed_status is not None
+    assert 'ConnectionRefusedError' in failed_status
+    assert 'broker dead' in failed_status
+
+
+def test_notify_disabled_means_no_calls():
+    """If sd_notify.Notifier reports enabled=False (= not under systemd),
+    App.run must NOT make any notify-calls — they'd be no-ops anyway
+    but cleaner not to."""
+    notify = MagicMock()
+    notify.enabled.return_value = False  # not under systemd
+    app = _make_app(notify=notify)
+    assert app.notify_enabled is False
+
+    raised = []
+
+    def _setup():
+        raised.append(1)
+        if len(raised) >= 2:
+            raise KeyboardInterrupt
+        raise RuntimeError('boom')
+
+    with patch.object(app, '_setup', side_effect=_setup), \
+         patch('app.time.sleep'):
+        with pytest.raises(KeyboardInterrupt):
+            app.run()
+
+    notify.ready.assert_not_called()
+    notify.status.assert_not_called()
+    notify.notify.assert_not_called()
+
+
+def test_notify_none_means_no_attribute_errors():
+    """If sd_notify is unavailable (Linux-only dep), notify is None.
+    App.run must handle that gracefully."""
+    app = _make_app(notify=None)
+    assert app.notify is None
+    assert app.notify_enabled is False
+
+    raised = []
+
+    def _setup():
+        raised.append(1)
+        if len(raised) >= 2:
+            raise KeyboardInterrupt
+        raise RuntimeError('boom')
+
+    with patch.object(app, '_setup', side_effect=_setup), \
+         patch('app.time.sleep'):
+        # Must not crash with AttributeError on None.notify(...)
+        with pytest.raises(KeyboardInterrupt):
+            app.run()

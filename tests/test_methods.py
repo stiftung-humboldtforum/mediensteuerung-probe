@@ -96,6 +96,74 @@ def test_fans_linux(mock_fans):
     assert result['thinkpad'][0]['current'] == 2500
 
 
+# --- Linux display() output parsing ---------------------------------------
+
+# Realistic xrandr output snippet (only the relevant section):
+_XRANDR_OUTPUT_NORMAL = b"""\
+Screen 0: minimum 8 x 8, current 1920 x 1080, maximum 32767 x 32767
+HDMI-0 connected primary 1920x1080+0+0 (normal left inverted right x axis y axis) 597mm x 336mm
+   1920x1080     60.00*+  74.97
+   1280x1024     75.02
+"""
+
+_XRANDR_OUTPUT_NO_ACTIVE = b"""\
+Screen 0: minimum 8 x 8, current 0 x 0, maximum 32767 x 32767
+HDMI-0 connected (normal left inverted right x axis y axis)
+   1920x1080     60.00
+   1280x1024     75.02
+"""
+
+_XRANDR_OUTPUT_HIGH_REFRESH = b"""\
+Screen 0: minimum 8 x 8, current 2560 x 1440, maximum 32767 x 32767
+DP-0 connected primary 2560x1440+0+0 (normal left inverted right x axis y axis) 597mm x 336mm
+   2560x1440    144.00*+ 120.00 100.00 60.00
+"""
+
+
+@patch('methods._linux.subprocess.run')
+def test_display_linux_parses_normal_output(mock_run):
+    """Standard xrandr output with active mode '*+' marker."""
+    mock_run.return_value = subprocess.CompletedProcess(
+        args=['xrandr', '--current'], returncode=0,
+        stdout=_XRANDR_OUTPUT_NORMAL, stderr=b'',
+    )
+    from methods._linux import display
+    assert display() == '1920x1080, 60.00 Hz'
+
+
+@patch('methods._linux.subprocess.run')
+def test_display_linux_no_active_mode_returns_none(mock_run):
+    """If xrandr has no '*' marker (display unconfigured)."""
+    mock_run.return_value = subprocess.CompletedProcess(
+        args=['xrandr', '--current'], returncode=0,
+        stdout=_XRANDR_OUTPUT_NO_ACTIVE, stderr=b'',
+    )
+    from methods._linux import display
+    assert display() is None
+
+
+@patch('methods._linux.subprocess.run')
+def test_display_linux_high_refresh_rate(mock_run):
+    """144Hz monitors must parse without errors."""
+    mock_run.return_value = subprocess.CompletedProcess(
+        args=['xrandr', '--current'], returncode=0,
+        stdout=_XRANDR_OUTPUT_HIGH_REFRESH, stderr=b'',
+    )
+    from methods._linux import display
+    assert display() == '2560x1440, 144.00 Hz'
+
+
+@patch('methods._linux.subprocess.run')
+def test_display_linux_xrandr_fails_returns_none(mock_run):
+    """xrandr exit-non-zero (e.g. no DISPLAY) → None."""
+    mock_run.return_value = subprocess.CompletedProcess(
+        args=['xrandr', '--current'], returncode=1,
+        stdout=b'', stderr=b"Can't open display",
+    )
+    from methods._linux import display
+    assert display() is None
+
+
 # --- Subprocess-Timeout coverage (R1) -------------------------------------
 
 @patch('methods._linux.subprocess.check_output')
