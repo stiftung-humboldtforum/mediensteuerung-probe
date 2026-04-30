@@ -10,6 +10,34 @@ For the historical migration from `avorus-probe` see
 
 ## [Unreleased]
 
+### Added
+- **Linux-Test-Setup via Docker** ([`Dockerfile.linux-test`](Dockerfile.linux-test)
+  + [`docker-compose.linux-test.yml`](docker-compose.linux-test.yml)) für
+  Linux-Codepath-Verifikation auf macOS-Dev ohne PC-Wechsel.
+- **Mock-Tests für Linux-Plattform-Funktionen** in
+  `tests/test_methods_linux.py` (analog `_win32`-Mocks). Coverage
+  `_linux.py` 71% → 95%.
+- **`docs/quick-test-real-hardware.md`** — kurzer Workflow-Guide
+  (macOS-Dev → Docker-Sanity → eigener Linux-PC → eigener Windows-PC).
+
+### Changed
+- **N1-N7 Review-Fixes:** auto-broker lazy (nur bei integration-Tests
+  gespawnt), `_wait_for_probe_connected` event-driven, Reconnect-Test
+  mit Coverage, `tls_broker` cert-validity 30 Tage, `Dockerfile.linux-test`
+  cargo-cult cleanup, `tests/conftest.py` mit Section-Headern, CHANGELOG
+  strukturiert.
+- README modernisiert (Project Structure mit aktuellem File-Tree,
+  Local-Testing auf Auto-Broker reduziert).
+- Test-Counts in README/CHANGELOG/docs konsistent korrigiert
+  (91 Unit + 11 Integration = 102).
+- VM-Setup-Anleitung (UTM/Parallels) aus `docs/quick-test-real-hardware.md`
+  und `docs/testing.md` entfernt — Workflow ist Tests auf dem eigenen
+  Linux/Windows-PC, nicht in lokalen VMs auf macOS.
+- `BACKOFF_INITIAL`/`BACKOFF_MAX`/`STALL_TOLERANCE` als Klassen-
+  Konstanten oben in `App`-Klasse (waren teils function-local Magic
+  Numbers).
+- `pre-commit` hooks auf aktuelle Versionen aktualisiert.
+
 ## [0.2.0] — 2026-04-30
 
 The first release after the `avorus-probe` fork. Major hardening

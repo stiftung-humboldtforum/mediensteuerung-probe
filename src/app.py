@@ -37,6 +37,17 @@ class App:
     or any failure: stop, exponential-backoff, retry.
     """
 
+    # Reconnect-Backoff (siehe N8): bei jedem fehlgeschlagenen
+    # Setup/Connect verdoppelt sich die Wartezeit, deckelt bei MAX.
+    BACKOFF_INITIAL = 5
+    BACKOFF_MAX = 60
+
+    # Toleranz fuer initialen Probe-Thread/App-Thread Start-Race im
+    # Watchdog-Heartbeat-Check (siehe Bug B / STALL_TOLERANCE-fix).
+    # Erst nach >STALL_TOLERANCE stalled-cycles wird sd_notify-Watchdog-
+    # Ping zurueckgehalten und Warning geloggt.
+    STALL_TOLERANCE = 2
+
     def __init__(
         self,
         config: dict,
@@ -114,9 +125,6 @@ class App:
                            client=self.mqtt_client,
                            config=self.config)
 
-    BACKOFF_INITIAL = 5
-    BACKOFF_MAX = 60
-
     def run(self) -> None:
         """Main lifecycle loop. Exits only via SIGTERM/SIGKILL — the
         outer service manager (systemd / NSSM) is responsible for
@@ -169,13 +177,6 @@ class App:
 
                 last_heartbeat = self.probe.heartbeat
                 stalled_cycles = 0
-                # Toleranz fuer initialen Race: Probe-Thread startet
-                # seinen 5s-wait beim probe.start() (vor Connect), darum
-                # kann der erste call_methods()-Cycle bis zu 5s nach
-                # connected_event verzoegert sein. Wir tolerieren
-                # STALL_TOLERANCE Cycles ohne Warning, damit der
-                # Watchdog beim Startup nicht falsch-positiv anschlaegt.
-                STALL_TOLERANCE = 2
                 while self.probe.is_connected:
                     time.sleep(5)
                     current_heartbeat = self.probe.heartbeat
@@ -186,7 +187,7 @@ class App:
                             self.notify.notify()
                     else:
                         stalled_cycles += 1
-                        if stalled_cycles > STALL_TOLERANCE:
+                        if stalled_cycles > self.STALL_TOLERANCE:
                             logger.warning('Probe heartbeat stalled (%d cycles); withholding sd_notify watchdog ping', stalled_cycles)
 
                 logger.debug('Probe is not connected')

@@ -162,22 +162,28 @@ See [`docs/testing.md`](docs/testing.md) for the full testing
 strategy and [`docs/quick-test-real-hardware.md`](docs/quick-test-real-hardware.md)
 for the dev → Linux-PC → Windows-PC workflow.
 
-### Reproducible builds (`pip-compile`)
+### Reproducible builds (`uv pip compile`)
 
-`requirements.lock.txt` is the resolved transitive lock of
-`requirements.txt`, generated via `pip-compile` (from `pip-tools`).
-For deterministic deploys, prefer it over `requirements.txt`:
+Two lock files for the two production targets — both generated via
+`uv pip compile --python-platform <linux|windows>` so they include
+the platform-specific transitive deps (sd-notify on Linux,
+pycaw/comtypes/pythonnet on Windows).
 
 ```bash
+# On a Linux Kiosk
 pip install -r requirements.lock.txt
+
+# On a Windows Kiosk
+pip install -r requirements.lock.windows.txt
 ```
 
-To re-generate (run on the **target platform** so `sys_platform` markers
-resolve correctly — Linux for production probes):
+To re-generate after a `requirements.txt` change (run on any platform —
+`uv` resolves cross-platform):
 
 ```bash
-pip install pip-tools
-pip-compile --strip-extras --output-file=requirements.lock.txt requirements.txt
+brew install uv  # macOS / Linux
+uv pip compile --python-platform linux   --strip-extras --output-file requirements.lock.txt          requirements.txt
+uv pip compile --python-platform windows --strip-extras --output-file requirements.lock.windows.txt  requirements.txt
 ```
 
 ### Project layout / `pyproject.toml`
