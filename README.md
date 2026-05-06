@@ -1,291 +1,196 @@
 # Humboldt-Probe
 
-Humboldt-Probe is a software component designed to be installed on computers within AV/Digital Media installations. It enables these computers to communicate with a manager service, providing real-time control and reporting health and status metrics back to the system via MQTT.
+Software-Komponente fuer AV/Digital-Media-Installations-PCs. Verbindet
+sich per MQTT mit dem Manager-Service und liefert Telemetrie / nimmt
+Kommandos entgegen.
 
 ## Features
 
-- **MQTT Integration:** Secure client connection to an MQTT broker for telemetry and command exchange.
-- **Cross-Platform:** Runs on Linux and Windows with platform-specific sensor implementations.
-- **Hardware Monitoring:** CPU/GPU temperatures and fan speeds via psutil (Linux) or LibreHardwareMonitor (Windows).
-- **Audio Control:** Mute/unmute via wpctl/PipeWire (Linux) or pycaw/COM (Windows).
-- **Service Watchdog:** Utilizes `sd_notify` for systemd notification (Linux).
-- **Resilience:** Built-in retry mechanism for intermittent network issues.
-- **Secure Communication:** TLS support for MQTT.
+- MQTT-Client (TLS / mTLS optional, Last-Will, retained Status-Topics)
+- Cross-Platform: Linux + Windows mit plattform-spezifischen Sensoren
+- Hardware-Monitoring: CPU/GPU-Temperaturen + Lueftern via psutil (Linux)
+  bzw. LibreHardwareMonitor (Windows)
+- Audio-Steuerung: wpctl/PipeWire (Linux) bzw. pycaw/COM (Windows)
+- systemd-Watchdog (`sd_notify`, Linux)
+- Reconnect-Backoff bei Verbindungsabbruch
 
-## Project Structure
+## Projektstruktur
 
 ```
-humboldt-probe/
-  src/
-    app.py                       # Lifecycle: CLI, MQTT client, reconnect/backoff loop, sd_notify
-    probe.py                     # Probe thread (periodic polling + manager-command dispatch)
-    methods/
-      __init__.py                # Platform-dispatch + common sensors (ping, boot_time, mpv_file_pos_sec, easire) + SENSORS/COMMANDS whitelists
-      _linux.py                  # Linux impl (wpctl, xrandr, psutil, /proc/uptime)
-      _win32.py                  # Windows impl (pycaw, LibreHardwareMonitor, Win32 EnumDisplaySettingsW)
-      _stub.py                   # Fallback for unsupported platforms (macOS dev)
-    misc/
-      __init__.py                # Config parser, JSON envelope, payload validation
+src/
+  app.py                       Lifecycle: CLI, MQTT, Reconnect-Loop, sd_notify
+  probe.py                     Probe-Thread (Sensor-Polls + Command-Dispatch)
+  methods/
+    __init__.py                Plattform-Dispatch + SENSORS/COMMANDS-Whitelists
+    _linux.py                  Linux (wpctl, xrandr, psutil)
+    _win32.py                  Windows (pycaw, LibreHardwareMonitor, Win32 API)
+    _stub.py                   Fallback (macOS-Dev)
+  misc/
+    __init__.py                Config-Parser, JSON-Envelope, Validation
 
-  tests/
-    conftest.py                  # Auto-Broker, MQTT fixtures, running_probe, tls_broker (see top-of-file sections)
-    sitecustomize.py             # subprocess-coverage hook (Probe-subprocess covered too)
-    _certs.py                    # ephemeral CA + server + client certs for TLS test
-    test_misc.py                 # 18 tests: config parser, JSON envelope, payload validation
-    test_methods.py              # 20 tests: Linux paths + common sensors + display parser
-    test_methods_win32.py        # 11 tests: Windows paths via mocks (pycaw, LHM, ctypes)
-    test_probe.py                # 30 tests: Probe class + threading + whitelist gates
-    test_app.py                  # 12 tests: FQDN caching, --no_tls banner, sd_notify sequences
-    test_integration.py          # 9 tests: end-to-end against real Mosquitto
-
-  scripts/
-    smoke-test.sh                # Pre-/post-deploy MQTT verification (7 checks)
-    hardware-test-linux.sh       # Hardware sensors via SSH after Linux deploy
-    hardware-test-windows.ps1    # Hardware sensors via RDP/PSRemoting after Windows deploy
-    install-windows.ps1          # Idempotent NSSM service setup
-    mpv_control.example.sh       # Reference impl for the optional mpv_file_pos_sec helper
-
-  systemd/humboldt-probe.service # Reference unit (Type=notify, WatchdogSec=30s)
-
-  lib/win32/                     # LibreHardwareMonitorLib.dll + HidSharp.dll + LICENSE.txt
-  mosquitto/test.conf            # mosquitto config used by docker-compose.test.yml
-
-  docs/
-    testing.md                   # Test strategy: unit / integration / hardware / CI
-    migration-from-avorus.md     # Historical fork log (one-shot, not a living changelog)
-
-  .github/
-    workflows/test.yml           # Matrix Linux 3.9-3.13 + macOS + Windows + integration + lint
-    dependabot.yml               # monthly pip + actions updates
-
-  Dockerfile.linux-test          # Linux-codepath verification on macOS-Dev (no PipeWire/X11 — see docs/testing.md §10)
-  docker-compose.linux-test.yml  #     ↳ wrapper for the above
-  docker-compose.test.yml        # Standalone Mosquitto for ad-hoc 'pytest -m integration'
-
-  pyproject.toml                 # project metadata + pytest/coverage config
-  requirements.txt               # runtime deps (Linux + Windows markers)
-  requirements-dev.txt           # adds pytest, coverage, pip-tools, cryptography
-  requirements.lock.txt          # transitive lock via pip-compile
-  userconfig.example.txt         # Sample PROBE_METHODS / PROBE_CAPABILITIES
-  CHANGELOG.md                   # Keep-a-Changelog format
-  LICENSE                        # ⚠ placeholder — Stiftung action required
+tests/                         pytest unit + integration (Mosquitto extern)
+scripts/
+  smoke-test.sh                MQTT-Verifikation pre-/post-deploy
+  hardware-test-{linux,windows}.* Hardware-Sensor-Checks am Geraet
+  install-windows.ps1          Idempotenter NSSM-Service-Setup
+  mpv_control.example.sh       Reference-Impl fuer mpv_file_pos_sec
+systemd/humboldt-probe.service Reference-Unit (Type=notify, WatchdogSec=30s)
+lib/win32/                     LibreHardwareMonitorLib.dll + HidSharp.dll
 ```
 
-## MQTT Topics
+## MQTT-Topics
 
-The probe uses two topic prefixes:
+Zwei Praefixe:
 
-- **`probe/<fqdn>/...`** — Outbound: sensor data and command responses published by the probe.
-- **`manager/<fqdn>/...`** — Inbound: commands sent to the probe from the manager.
+- `probe/<fqdn>/...`   — outbound (Sensor-Daten + Command-Antworten)
+- `manager/<fqdn>/...` — inbound (Kommandos vom Manager)
 
-### Outbound topics in detail
+### Outbound
 
-| Topic                                | Retained | QoS | Payload                                                                 |
-| ------------------------------------ | -------- | --- | ----------------------------------------------------------------------- |
-| `probe/<fqdn>/connected`             | yes      | 1   | `"1"` while online, `"0"` set as MQTT Last-Will on unclean disconnect.  |
-| `probe/<fqdn>/capabilities`          | yes      | 1   | CSV string from `PROBE_CAPABILITIES` (e.g. `wake,shutdown,reboot`).     |
-| `probe/<fqdn>/boot_time`             | yes      | 1   | JSON envelope with Unix-epoch float (`{"data":{"result":1714...}}`).    |
-| `probe/<fqdn>/<sensor>`              | no       | 0   | JSON envelope with sensor result, published every 5s.                   |
-| `probe/<fqdn>/errors`                | no       | 0   | JSON envelope with status dict (`{display:'ok', easire:'error', ...}`). |
-| `probe/<fqdn>/<command>`             | no       | 1   | Response to a manager command (`{"data":{"status":"received"}}` then `{"data":{"status":"complete","result":...}}` or `{"error":{...}}`). |
+| Topic                       | Retained | QoS | Payload                                                              |
+| --------------------------- | -------- | --- | -------------------------------------------------------------------- |
+| `probe/<fqdn>/connected`    | yes      | 1   | `"1"` online, `"0"` als Last-Will bei unsauberem Disconnect          |
+| `probe/<fqdn>/capabilities` | yes      | 1   | CSV aus `PROBE_CAPABILITIES`                                         |
+| `probe/<fqdn>/boot_time`    | yes      | 1   | JSON-Envelope mit Unix-Epoch                                         |
+| `probe/<fqdn>/<sensor>`     | no       | 0   | JSON-Envelope mit Sensor-Result, alle 5s                             |
+| `probe/<fqdn>/errors`       | no       | 0   | JSON-Envelope mit Status-Dict pro Sensor                             |
+| `probe/<fqdn>/<command>`    | no       | 1   | Command-Response (`status: received` → `complete` oder `error`)      |
 
-### Inbound topics
+### Inbound
 
-| Topic                                | Payload                                                                              |
-| ------------------------------------ | ------------------------------------------------------------------------------------ |
-| `manager/<fqdn>/<command>`           | Optional JSON `{"args":[...], "kwargs":{...}}`. Empty payload means no-arg call.     |
+| Topic                      | Payload                                                            |
+| -------------------------- | ------------------------------------------------------------------ |
+| `manager/<fqdn>/<command>` | optional JSON `{"args":[...], "kwargs":{...}}` — leer = arg-los    |
 
-The probe subscribes with `noLocal=True`, so its own outbound publishes
-are not echoed back as commands.
+`noLocal=True` beim Subscribe — eigene Outbound-Publishes werden nicht
+als Kommando zurueckgespiegelt.
 
-### Response envelope
-
-All JSON envelopes follow:
+### Response-Envelope
 
 ```json
 {"data": {"status": "complete", "result": <sensor-or-command-result>}}
 ```
 
-or, on failure:
+oder bei Fehler:
 
 ```json
 {"error": {"message": "<ExceptionName>", "errors": [...]}}
 ```
 
-## System Requirements
+## System-Requirements
 
 ### Linux
 
-- Python 3.9+ (uses PEP 585 generic syntax `dict[str, Any]`)
-- Network access to the MQTT broker
-- wpctl (PipeWire/WirePlumber) for audio control
-- xrandr for display info
+- Python 3.9-3.13 (3.14 nicht unterstuetzt — pythonnet-Cap)
+- Netzwerk-Zugang zum MQTT-Broker
+- wpctl (PipeWire/WirePlumber) fuer Audio
+- xrandr fuer Display-Info
 
 ### Windows
 
-- Python 3.13+ (system-wide installation, not Windows Store)
-- Network access to the MQTT broker
-- LibreHardwareMonitorLib.dll + HidSharp.dll in `lib/win32/` (committed in repo)
-- NSSM for running as a service
+- Python 3.13 system-wide (`winget install Python.Python.3.13 --scope machine`)
+- Netzwerk-Zugang zum MQTT-Broker
+- LibreHardwareMonitorLib.dll + HidSharp.dll in `lib/win32/` (im Repo)
+- NSSM fuer Service-Betrieb
 
 ## Installation
 
-### Linux
-
 ```bash
-pip install -r requirements.txt
-```
-
-### Windows
-
-1. Install Python system-wide: `winget install Python.Python.3.13 --scope machine`
-2. Install dependencies:
-   ```
-   pip install -r requirements.txt
-   ```
-
-### Development / Tests
-
-```bash
-pip install -r requirements-dev.txt
-pytest                        # 102 tests (91 unit + 11 integration), Auto-Broker spawns Mosquitto
-pytest -m integration         # nur die 11 Integration-Tests gegen Auto-Broker
-```
-
-For Linux-codepath verification on a macOS dev machine, use Docker:
-
-```bash
-docker compose -f docker-compose.linux-test.yml run --rm probe-test
-```
-
-See [`docs/testing.md`](docs/testing.md) for the full testing
-strategy and [`docs/quick-test-real-hardware.md`](docs/quick-test-real-hardware.md)
-for the dev → Linux-PC → Windows-PC workflow.
-
-### Reproducible builds (`uv pip compile`)
-
-Two lock files for the two production targets — both generated via
-`uv pip compile --python-platform <linux|windows>` so they include
-the platform-specific transitive deps (sd-notify on Linux,
-pycaw/comtypes/pythonnet on Windows).
-
-```bash
-# On a Linux Kiosk
+# Linux
 pip install -r requirements.lock.txt
 
-# On a Windows Kiosk
+# Windows
 pip install -r requirements.lock.windows.txt
+
+# Dev / Tests
+pip install -r requirements-dev.txt
 ```
-
-To re-generate after a `requirements.txt` change (run on any platform —
-`uv` resolves cross-platform):
-
-```bash
-brew install uv  # macOS / Linux
-uv pip compile --python-platform linux   --strip-extras --output-file requirements.lock.txt          requirements.txt
-uv pip compile --python-platform windows --strip-extras --output-file requirements.lock.windows.txt  requirements.txt
-```
-
-### Project layout / `pyproject.toml`
-
-`pyproject.toml` carries project metadata (name, version,
-`requires-python>=3.9`) and tool configuration (pytest paths, treat
-`DeprecationWarning` as errors). It is **not** a build-system manifest
-— the probe is deployed via `pip install -r requirements*.txt`, not
-as a wheel. So:
-
-- Source-of-truth for **install** is `requirements.txt` /
-  `requirements.lock.txt`.
-- Source-of-truth for **dev tooling** (pytest discovery, sys.path)
-  is `pyproject.toml`.
-
-Running `pytest` from the repo root works without arguments because
-`pyproject.toml` already declares `pythonpath = ["src"]` and
-`testpaths = ["tests"]`.
 
 ## Usage
+
+Defaults: `--mqtt_hostname srv-control-avm`, Cert-Dateien
+`ca_certificate.pem` / `client_certificate.pem` / `client_key.pem`
+neben `app.py`. Damit reicht im einfachsten Fall:
+
+```bash
+python src/app.py --config_file userconfig.txt
+```
+
+Vollstaendig:
 
 ```bash
 python src/app.py \
     --config_file userconfig.txt \
-    --mqtt_hostname mqtt.example.com \
+    --mqtt_hostname srv-control-avm \
     --mqtt_port 8883 \
-    --ca_certificate /path/to/ca.pem \
-    --certfile /path/to/client.pem \
+    --ca_certificate /path/to/ca_certificate.pem \
+    --certfile /path/to/client_certificate.pem \
     --keyfile /path/to/client_key.pem \
     --loglevel INFO
 ```
 
-### CLI Options
+### CLI-Optionen
 
-| Option             | Description                                                    |
-| ------------------ | -------------------------------------------------------------- |
-| `--config_file`    | Path to the configuration file (required)                      |
-| `--mqtt_hostname`  | Hostname of the MQTT broker (required)                         |
-| `--mqtt_port`      | MQTT port (default: 8883, or 1883 with `--no_tls`)            |
-| `--ca_certificate` | CA certificate for TLS (required unless `--no_tls`)            |
-| `--certfile`       | Client certificate for TLS (required unless `--no_tls`)        |
-| `--keyfile`        | Client key for TLS (required unless `--no_tls`)                |
-| `--no_tls`         | Disable TLS (for local testing)                                |
-| `--loglevel`       | CRITICAL, ERROR, WARNING, INFO, DEBUG                          |
+| Option             | Default                  | Beschreibung                            |
+| ------------------ | ------------------------ | --------------------------------------- |
+| `--config_file`    | (required)               | Pfad zur userconfig.txt                 |
+| `--mqtt_hostname`  | `srv-control-avm`        | MQTT-Broker-Host                        |
+| `--mqtt_port`      | 8883 (1883 mit `--no_tls`) | MQTT-Port                             |
+| `--ca_certificate` | `ca_certificate.pem`     | CA fuer TLS                             |
+| `--certfile`       | `client_certificate.pem` | Client-Cert fuer mTLS                   |
+| `--keyfile`        | `client_key.pem`         | Client-Key fuer mTLS                    |
+| `--no_tls`         | false                    | TLS aus (nur lokales Testen)            |
+| `--loglevel`       | INFO                     | CRITICAL/ERROR/WARNING/INFO/DEBUG       |
+
+### Env-Variablen
+
+| Variable               | Default | Beschreibung                                            |
+| ---------------------- | ------- | ------------------------------------------------------- |
+| `PROBE_MQTT_KEEPALIVE` | 60      | MQTT-Keepalive-Sek. Niedriger = schnellerer Last-Will.  |
 
 ## Configuration
 
-The config file contains two comma-separated lists:
+`userconfig.txt`:
 
 ```bash
-PROBE_METHODS="ping,temperatures,fans,uptime,display,is_muted,easire"
+PROBE_METHODS="ping,temperatures,fans,uptime,display,is_muted"
 PROBE_CAPABILITIES="wake,shutdown,reboot,mute,unmute"
 ```
 
-`PROBE_METHODS` — Sensors polled every 5 seconds, results published via MQTT.
+`PROBE_METHODS` — Sensoren die alle 5s gepollt werden.
+`PROBE_CAPABILITIES` — Kommandos die der Manager senden darf.
 
-`PROBE_CAPABILITIES` — Reported to the manager; defines which commands the probe accepts.
+### PROBE_METHODS
 
-### Available PROBE_METHODS
+| Methode          | Beschreibung                | Linux         | Windows               |
+| ---------------- | --------------------------- | ------------- | --------------------- |
+| ping             | Lebenszeichen               | -             | -                     |
+| uptime           | Sekunden seit Boot          | /proc/uptime  | psutil                |
+| temperatures     | CPU/GPU-Temperaturen        | psutil        | LibreHardwareMonitor  |
+| fans             | Lueftergeschwindigkeiten    | psutil        | LibreHardwareMonitor  |
+| display          | Aufloesung + Refresh-Rate   | xrandr        | Win32 API (ctypes)    |
+| is_muted         | Audio-Mute-State            | wpctl         | pycaw                 |
+| easire           | easire-Player laeuft?       | psutil        | psutil                |
+| mpv_file_pos_sec | mpv-Playback-Position       | mpv_control   | -                     |
 
-| Method           | Description                         | Linux              | Windows                    |
-| ---------------- | ----------------------------------- | ------------------ | -------------------------- |
-| ping             | Signal that the device is alive     | -                  | -                          |
-| uptime           | Seconds since boot                  | /proc/uptime       | psutil                     |
-| temperatures     | CPU/GPU temperatures                | psutil             | LibreHardwareMonitor       |
-| fans             | CPU/GPU fan speeds                  | psutil             | LibreHardwareMonitor       |
-| display          | Display resolution and refresh rate | xrandr             | Win32 API (ctypes)         |
-| is_muted         | Audio mute state                    | wpctl              | pycaw                      |
-| easire           | easire-player process running       | psutil             | psutil                     |
-| mpv_file_pos_sec | Playback position of mpv player     | mpv_control        | -                          |
+`easire` und `mpv_file_pos_sec` sind optional und nur sinnvoll wenn
+die jeweilige Anwendung am Kiosk laeuft. `mpv_file_pos_sec` braucht
+zusaetzlich das externe `mpv_control`-Tool auf `$PATH` — Reference-Impl
+in [`scripts/mpv_control.example.sh`](scripts/mpv_control.example.sh).
 
-#### `mpv_control`
+### PROBE_CAPABILITIES
 
-`mpv_file_pos_sec` requires an external helper called `mpv_control` on
-`$PATH` that talks to mpv's IPC socket. It is **not** installed by
-this repo and not published as a pip package. If you don't run mpv as
-the kiosk player, you can omit `mpv_file_pos_sec` from `PROBE_METHODS`.
+| Capability | Beschreibung    | Linux                  | Windows                |
+| ---------- | --------------- | ---------------------- | ---------------------- |
+| wake       | Wake-on-LAN     | extern via Manager     | extern via Manager     |
+| shutdown   | Geraet aus      | sudo shutdown now      | shutdown /s /t 0       |
+| reboot     | Geraet reboot   | sudo reboot now        | shutdown /r /t 0       |
+| mute       | Audio mute      | wpctl                  | pycaw                  |
+| unmute     | Audio unmute    | wpctl                  | pycaw                  |
 
-A reference implementation is at
-[`scripts/mpv_control.example.sh`](scripts/mpv_control.example.sh) —
-copy to `/usr/local/bin/mpv_control` and make executable. It uses
-`socat` to talk to mpv's IPC socket (`--input-ipc-server=/tmp/mpvsocket`)
-and prints the integer seconds.
-
-See also <https://github.com/mpv-player/mpv/blob/master/DOCS/man/ipc.rst>.
-
-### Available PROBE_CAPABILITIES
-
-| Capability | Description          | Linux              | Windows                    |
-| ---------- | -------------------- | ------------------ | -------------------------- |
-| wake       | Wake the device      | Wake-on-LAN (external) | Wake-on-LAN (external)     |
-| shutdown   | Shut down the device | sudo shutdown now  | shutdown /s /t 0           |
-| reboot     | Reboot the device    | sudo reboot now    | shutdown /r /t 0           |
-| mute       | Mute audio           | wpctl              | pycaw                      |
-| unmute     | Unmute audio         | wpctl              | pycaw                      |
-
-## Running as a Service
+## Service-Betrieb
 
 ### Linux (systemd)
-
-A reference unit file is at [`systemd/humboldt-probe.service`](systemd/humboldt-probe.service).
-Adjust paths and then:
 
 ```bash
 sudo cp systemd/humboldt-probe.service /etc/systemd/system/
@@ -294,87 +199,81 @@ sudo systemctl enable --now humboldt-probe
 journalctl -u humboldt-probe -f
 ```
 
-The unit is `Type=notify` with `WatchdogSec=30s`, so the probe's
-heartbeat (see B6) is enforced — a stalled probe is auto-restarted.
+`Type=notify` mit `WatchdogSec=30s` — gestallter Probe wird automatisch
+neu gestartet.
 
 ### Windows (NSSM)
 
 ```powershell
-# Install NSSM (one-time)
 winget install NSSM.NSSM
+.\scripts\install-windows.ps1   # Default: srv-control-avm + Certs aus C:\humboldt-probe\
+nssm {start|stop|restart|status} HumboldtProbe
 ```
 
-Install / re-install the service via the helper script (run as
-Administrator):
+NSSM startet die Probe bei Boot und nach Crash automatisch neu.
 
-```powershell
-.\scripts\install-windows.ps1 `
-    -MqttHostname mqtt.example.com `
-    -CaCertificate C:\humboldt-probe\ca.pem `
-    -CertFile C:\humboldt-probe\client.pem `
-    -KeyFile C:\humboldt-probe\client.key
-```
+## Operations
 
-For local testing against a localhost broker:
+### MQTT-Topics fuer Operator
 
-```powershell
-.\scripts\install-windows.ps1 -MqttHostname 127.0.0.1 -NoTls
-```
+| Topic                    | Zweck                                                |
+| ------------------------ | ---------------------------------------------------- |
+| `probe/<fqdn>/connected` | `"1"` online, `"0"` Last-Will. retained.             |
+| `probe/<fqdn>/version`   | Probe-Software-Version (z.B. `0.2.0`). retained.     |
+| `probe/<fqdn>/capabilities` | CSV der unterstuetzten Kommandos. retained.       |
+| `probe/<fqdn>/boot_time` | Unix-epoch Boot. retained.                            |
+| `probe/<fqdn>/errors`    | Status-Aggregation pro Sensor (alle 5s).             |
 
-The script is idempotent — re-running it with different args
-reconfigures the existing service in-place.
+### Cert-Renewal
 
-```powershell
-# Manage the service
-nssm start   HumboldtProbe
-nssm stop    HumboldtProbe
-nssm restart HumboldtProbe
-nssm status  HumboldtProbe
-```
+mTLS-Zertifikate haben begrenzte Lifetime. Vor Ablauf:
 
-NSSM automatically restarts the probe on crash and starts it on boot.
+1. Neue Cert+Key auf Kiosk legen (gleiche Dateinamen ueberschreiben).
+2. Service neu starten:
+   - Linux: `sudo systemctl restart humboldt-probe`
+   - Windows: `nssm restart HumboldtProbe`
+3. Verify: `journalctl -u humboldt-probe -n 50` (Linux) bzw. NSSM-Logfile.
 
-## Local Testing
-
-The test suite handles its own MQTT broker — install
-`mosquitto` once and `pytest` does the rest:
+### Update / Rollback
 
 ```bash
-# macOS:        brew install mosquitto
-# Debian/Ubu:   sudo apt install mosquitto mosquitto-clients
-# Windows:      winget install EclipseFoundation.Mosquitto
+# Linux
+git -C /opt/humboldt-probe fetch && git -C /opt/humboldt-probe checkout <tag>
+sudo systemctl restart humboldt-probe
 
-pip install -r requirements-dev.txt
-pytest                       # 102 tests, ~50s — Auto-Broker spawns Mosquitto if needed
-pytest -m integration        # only the 11 integration tests (real Mosquitto roundtrips)
+# Rollback
+git -C /opt/humboldt-probe checkout <previous-tag>
+sudo systemctl restart humboldt-probe
 ```
 
-For ad-hoc manual exploration (Probe + your own MQTT-Explorer
-session), see [`docs/testing.md` §3b](docs/testing.md).
+`probe/<fqdn>/version` zeigt nach Restart die neue Version — Manager-
+Dashboard kann Fleet-Drift erkennen.
 
-### Real-hardware verification
+### Troubleshooting
 
-Probe-Code uses platform-specific sensors — `methods/_stub.py` no-ops
-on macOS-Dev. Production-near tests laufen direkt auf einem Linux-PC
-und einem Windows-PC (jeweils `git clone` + `pip install` + `pytest` +
-`hardware-test-*`). Optional Docker für einen schnellen Linux-
-Sanity-Check ohne PC-Wechsel. Anleitung:
-**[`docs/quick-test-real-hardware.md`](docs/quick-test-real-hardware.md)**.
+| Symptom | Wahrscheinliche Ursache | Diagnose |
+|---|---|---|
+| `Setup error: [Errno 2] No such file or directory` | Cert-Datei fehlt oder Pfad falsch | `ls *.pem` neben `app.py` pruefen, oder `--ca_certificate=...` setzen |
+| `Setup error: [Errno -2] Name or service not known` (Linux) / `getaddrinfo failed` (Windows) | Hostname unbekannt | `nslookup <broker>` / `ping <broker>` — VPN aktiv? |
+| `TimeoutError: timed out` | Broker erreicht aber nicht antwortend (Firewall, falscher Port) | `nc -zv <broker> 8883` |
+| `Setup failed, retrying in 5s` Loop | Persistent error in `_setup` (cert / hostname / config_file) | `journalctl -u humboldt-probe -n 50` zeigt Stacktrace; ersten Fehler beheben |
+| Manager sieht `connected="1"` aber keine Sensor-Daten | `PROBE_METHODS` leer oder nur unbekannte Sensoren | `cat userconfig.txt` und Log nach `Ignoring unknown PROBE_METHODS` durchsuchen |
+| Manager-Command `mute` antwortet `Method not allowed` | `mute` fehlt in `PROBE_CAPABILITIES` | `userconfig.txt` ergaenzen, Service neu starten |
+| `probe/<fqdn>/temperatures` ist `{}` (leer, Windows) | LHM braucht Admin-Rechte; NSSM-Service als LocalSystem oder Admin-User starten | `nssm set HumboldtProbe ObjectName <Admin-User> ...` |
+| `wpctl: command not found` (Linux) | PipeWire/WirePlumber nicht installiert | `sudo apt install pipewire wireplumber` |
+| `Cannot read config ...` | userconfig.txt-Pfad falsch oder Permissions | `ls -la` + ggf. owner-Anpassung an Probe-User |
 
-## Remote Development (Mac to Linux/Windows)
+## Testing
 
-With SSH (Linux + OpenSSH on Windows) you can iterate from your dev
-machine:
+Mosquitto fuer Integration-Tests installieren (`brew install mosquitto`
+/ `apt install mosquitto` / `winget install EclipseFoundation.Mosquitto`),
+dann:
 
 ```bash
-# Sync the working tree
-rsync -av --exclude='.venv' --exclude='__pycache__' . user@kiosk-01:/opt/humboldt-probe/
-
-# Restart the service after a change
-ssh user@kiosk-01 "sudo systemctl restart humboldt-probe"
-ssh win-kiosk-01 "nssm restart HumboldtProbe"   # via Win-OpenSSH
-
-# One-off sensor check on the real hardware
-ssh user@kiosk-01 "cd /opt/humboldt-probe && bash scripts/hardware-test-linux.sh"
-ssh win-kiosk-01 "cd C:\\humboldt-probe; powershell .\\scripts\\hardware-test-windows.ps1"
+mosquitto -p 11883 -v &
+pytest                           # alle Tests
+pytest -m integration            # nur Integration-Tests
 ```
+
+Details: [`docs/testing.md`](docs/testing.md) und
+[`docs/quick-test-real-hardware.md`](docs/quick-test-real-hardware.md).

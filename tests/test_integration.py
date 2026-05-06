@@ -16,11 +16,8 @@ All tests in this file are auto-skipped if no broker is reachable —
 see conftest.py:pytest_collection_modifyitems.
 
 Run locally:
-    docker compose -f docker-compose.test.yml up -d   # or: mosquitto -p 11883
+    mosquitto -p 11883 -v &                           # external broker
     pytest -m integration
-    docker compose -f docker-compose.test.yml down
-
-Run in CI: see .github/workflows/test.yml integration job.
 """
 import json
 import os

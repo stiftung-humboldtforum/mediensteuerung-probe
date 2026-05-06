@@ -123,6 +123,10 @@ celerybeat.pid
 # Config
 userconfig.txt
 
+# TLS material — deployment-spezifisch, nie ins Repo
+*.pem
+*.key
+
 # Environments
 .env
 .venv

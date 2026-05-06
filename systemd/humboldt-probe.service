@@ -22,6 +22,8 @@ Description=Humboldt-Probe — MQTT health/control agent
 Documentation=https://github.com/stiftung-humboldtforum/mediensteuerung-probe
 After=network-online.target pipewire.service
 Wants=network-online.target
+StartLimitBurst=10
+StartLimitIntervalSec=300
 
 [Service]
 Type=notify
@@ -40,17 +42,18 @@ Environment=XDG_RUNTIME_DIR=/run/user/1000
 
 ExecStart=/usr/bin/python3 src/app.py \
     --config_file=/etc/humboldt-probe/userconfig.txt \
-    --mqtt_hostname=mqtt.example.com \
+    --mqtt_hostname=srv-control-avm \
     --mqtt_port=8883 \
-    --ca_certificate=/etc/humboldt-probe/ca.pem \
-    --certfile=/etc/humboldt-probe/client.pem \
-    --keyfile=/etc/humboldt-probe/client.key \
+    --ca_certificate=/etc/humboldt-probe/ca_certificate.pem \
+    --certfile=/etc/humboldt-probe/client_certificate.pem \
+    --keyfile=/etc/humboldt-probe/client_key.pem \
     --loglevel=INFO
 
-# Restart-Strategie: bei jedem Crash neu starten, max alle 5s.
+# Restart-Strategie: bei Failure neu starten, mit Burst-Limit gegen
+# tight loops (z.B. broker dauerhaft tot oder cert-Pfad falsch).
 # sd_notify-Watchdog feuert nach 30s ohne Heartbeat (siehe B6) und
-# triggert dann auch einen Restart.
-Restart=always
+# triggert ebenfalls einen Restart.
+Restart=on-failure
 RestartSec=5
 
 # Hardening

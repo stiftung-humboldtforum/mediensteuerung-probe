@@ -1,8 +1,9 @@
 # Periodische Sensor-Polls (alle 5s). Verfuegbar:
 #   ping, uptime, boot_time, temperatures, fans, display, is_muted,
 #   easire, mpv_file_pos_sec
+# easire setzt voraus dass der easire-Player als Prozess laeuft.
 # mpv_file_pos_sec setzt voraus dass das mpv_control-Tool installiert ist.
-PROBE_METHODS="ping,temperatures,fans,uptime,display,is_muted,easire,mpv_file_pos_sec"
+PROBE_METHODS="ping,temperatures,fans,uptime,display,is_muted"
 
 # Vom Manager akzeptierte Kommandos. Verfuegbar:
 #   wake, shutdown, reboot, mute, unmute, ping

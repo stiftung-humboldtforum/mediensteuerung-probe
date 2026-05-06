@@ -8,6 +8,7 @@ if platform.system() == 'Windows':
     sys.coinit_flags = 0  # COINIT_MULTITHREADED — match pythonnet/LHM
 
 import os
+import ssl
 import time
 import socket
 import logging
@@ -27,8 +28,14 @@ from misc import get_config, logger
 
 class FqdnChanged(RuntimeError):
     """Raised when socket.getfqdn() returns a different value than at
-    init. The run-Loop catches it and rebuilds the MQTT client with
-    the new identity."""
+    init. The run-Loop catches it, tears down the old probe, and
+    rebuilds the MQTT client with the new identity. The new FQDN is
+    carried as the second positional arg so the caller can install it
+    after a clean teardown of the old probe."""
+
+    def __init__(self, message: str, new_fqdn: str) -> None:
+        super().__init__(message)
+        self.new_fqdn = new_fqdn
 
 
 class App:
@@ -47,6 +54,14 @@ class App:
     # Erst nach >STALL_TOLERANCE stalled-cycles wird sd_notify-Watchdog-
     # Ping zurueckgehalten und Warning geloggt.
     STALL_TOLERANCE = 2
+
+    # Maximale Wartezeit am Stueck waehrend Reconnect-Backoff bevor wir
+    # einen sd_notify-Watchdog-Ping schicken muessen. Kleiner als der
+    # systemd-WatchdogSec (30s im Reference-Unit) — sonst wuerde
+    # systemd den Service waehrend einer langen Backoff-Sleep-Phase als
+    # gestallt markieren und neustarten, was den Backoff-Counter wegen
+    # frischen Setup-Versuchen sinnlos resetten wuerde.
+    BACKOFF_NOTIFY_INTERVAL = 15
 
     def __init__(
         self,
@@ -80,15 +95,17 @@ class App:
         the run-Loop fängt das, baut einen neuen Client (mit der neuen
         Identity) und reconnected.
 
-        Side-effect-frei (kein stop, kein logger.exception). Wird nur
-        in _setup() aufgerufen, nicht in der inner-while-Loop —
+        Wird nur in _setup() aufgerufen, nicht in der inner-while-Loop —
         DNS-Lookup pro 5s-Cycle war Verschwendung.
+
+        Atomar: self._fqdn wird ERST nach erfolgreichem Setup gewechselt.
+        So bleibt die alte FQDN gueltig falls der naechste _setup() eben-
+        falls fehlschlaegt — kein Verlust der Identity-Konsistenz fuer
+        das (noch laufende) alte Probe-Objekt.
         """
         current = socket.getfqdn()
         if current != self._fqdn:
-            old = self._fqdn
-            self._fqdn = current
-            raise FqdnChanged(f'FQDN changed: {old} → {current}')
+            raise FqdnChanged(f'FQDN changed: {self._fqdn} → {current}', current)
 
     def _setup(self) -> None:
         """Build a fresh mqtt.Client + Probe pair. Runs once per
@@ -102,6 +119,12 @@ class App:
             client_id=self.fqdn,
         )
         self.mqtt_client.enable_logger(logger)
+        # Bound the in-flight + queued message counts so a long broker
+        # outage does not let the paho client buffer grow without limit
+        # (Probe.call_methods publishes ~10 topics every 5s; over an
+        # hour-long disconnect that is ~7000 buffered messages).
+        self.mqtt_client.max_inflight_messages_set(20)
+        self.mqtt_client.max_queued_messages_set(200)
 
         # Last Will: when the probe drops unexpectedly the broker
         # publishes this to inform the manager. retained so newly
@@ -114,33 +137,70 @@ class App:
         )
 
         if not self.no_tls:
-            logger.info('MQTT TLS: %s %s %s', self.ca_certificate, self.certfile, self.keyfile)
+            logger.debug('MQTT TLS material: ca=%s cert=%s key=%s', self.ca_certificate, self.certfile, self.keyfile)
             self.mqtt_client.tls_set(
                 self.ca_certificate,
                 self.certfile,
-                self.keyfile
+                self.keyfile,
+                cert_reqs=ssl.CERT_REQUIRED,
+                tls_version=ssl.PROTOCOL_TLS_CLIENT,
             )
 
         self.probe = Probe(self.fqdn,
                            client=self.mqtt_client,
                            config=self.config)
 
+    def _backoff_sleep(self, seconds: int) -> None:
+        """Sleep `seconds` total, but ping sd_notify every
+        BACKOFF_NOTIFY_INTERVAL so the systemd Watchdog (WatchdogSec=30s)
+        does not trip during long retry-windows. Without this, a 60s
+        backoff would force systemd to restart the unit mid-sleep and
+        nullify exponential backoff."""
+        deadline = time.monotonic() + seconds
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return
+            chunk = min(self.BACKOFF_NOTIFY_INTERVAL, remaining)
+            time.sleep(chunk)
+            if self.notify_enabled:
+                self.notify.notify()
+
     def run(self) -> None:
-        """Main lifecycle loop. Exits only via SIGTERM/SIGKILL — the
-        outer service manager (systemd / NSSM) is responsible for
-        eventual stops."""
+        """Main lifecycle loop. Exits via SIGTERM/SIGKILL under a
+        service-manager (systemd / NSSM), or via KeyboardInterrupt /
+        SystemExit during interactive use. The outer try/finally
+        guarantees a clean stop() in every exit path so no thread or
+        socket leaks behind."""
         backoff = self.BACKOFF_INITIAL
+        try:
+            self._run_loop(backoff)
+        finally:
+            self.stop()
+
+    def _run_loop(self, backoff: int) -> None:
+        """Inner loop — split out so the outer run() can wrap it in a
+        try/finally without growing the indentation of every except-
+        branch by one level."""
         while True:
             try:
                 self._setup()
+            except FqdnChanged as e:
+                # Old probe (if any) is still bound to the previous FQDN.
+                # Tear it down cleanly before installing the new identity,
+                # so the next _setup() builds with the correct value.
+                logger.warning('%s — rebuilding identity', e)
+                self.stop()
+                self._fqdn = e.new_fqdn
+                continue  # immediate retry, no backoff for identity churn
             except Exception as e:
-                logger.exception(e)
+                logger.exception('Setup error: %s', e)
                 logger.warning('Setup failed, retrying in %ds', backoff)
                 if self.notify_enabled:
                     detail = f'{type(e).__name__}: {e}'[:200]
                     self.notify.status(f'Setup failed: {detail}')
                     self.notify.notify()
-                time.sleep(backoff)
+                self._backoff_sleep(backoff)
                 backoff = min(backoff * 2, self.BACKOFF_MAX)
                 continue
 
@@ -154,8 +214,14 @@ class App:
                 # MQTT keepalive default 60s — Last-Will fires nach
                 # ~1.5x keepalive (= 90s broker default). Tests setzen
                 # PROBE_MQTT_KEEPALIVE=5 fuer schnelleren Last-Will-
-                # Trigger.
-                keepalive = int(os.environ.get('PROBE_MQTT_KEEPALIVE', '60'))
+                # Trigger. Garbage env-values fall back to default
+                # statt _setup() in einer Loop wegen ValueError zu killen.
+                keepalive_raw = os.environ.get('PROBE_MQTT_KEEPALIVE', '60')
+                try:
+                    keepalive = int(keepalive_raw)
+                except ValueError:
+                    logger.warning('Invalid PROBE_MQTT_KEEPALIVE=%r — falling back to 60s', keepalive_raw)
+                    keepalive = 60
                 self.mqtt_client.connect(self.mqtt_hostname, self.mqtt_port, keepalive)
                 self.mqtt_client.loop_start()
 
@@ -192,7 +258,7 @@ class App:
 
                 logger.debug('Probe is not connected')
             except Exception as e:
-                logger.exception(e)
+                logger.exception('Connect cycle error: %s', e)
                 if self.notify_enabled:
                     # Exception-Typ und Kurzbeschreibung statt generischem
                     # 'Failed.' — der Manager sieht ueber sd_notify den
@@ -205,29 +271,59 @@ class App:
 
             self.stop()
             logger.info('Reconnect in %ds', backoff)
-            time.sleep(backoff)
+            self._backoff_sleep(backoff)
             backoff = min(backoff * 2, self.BACKOFF_MAX)
 
     def stop(self) -> None:
-        """Tear down current cycle: disconnect MQTT, signal Probe-
-        Thread to stop, join it. Idempotent — safe to call when
-        attributes don't yet exist (early Setup-failure)."""
-        if hasattr(self, 'mqtt_client') and self.mqtt_client.is_connected():
-            self.mqtt_client.disconnect()
+        """Tear down current cycle: disconnect MQTT, stop the network
+        loop thread, signal Probe-Thread to stop, join it. Idempotent —
+        safe to call when attributes don't yet exist (early Setup-failure).
+
+        On a clean (graceful) disconnect the Last-Will does NOT fire, so
+        we explicitly publish `connected="0"` retained before disconnecting
+        — otherwise the manager would keep seeing the previous retained
+        `connected="1"` until a new probe takes over the topic.
+        """
+        if hasattr(self, 'mqtt_client'):
+            if self.mqtt_client.is_connected():
+                # Mirror the Last-Will payload so dashboards see "offline"
+                # immediately rather than waiting for the next probe-up.
+                try:
+                    self.mqtt_client.publish(
+                        f'probe/{self.fqdn}/connected',
+                        payload='0', qos=1, retain=True,
+                    ).wait_for_publish(timeout=2)
+                except Exception as e:
+                    # Publish/wait can fail if the broker is mid-disconnect;
+                    # log at debug — Last-Will will still flip the topic on
+                    # the next unclean-disconnect cycle.
+                    logger.debug('Graceful offline-publish failed: %s', e)
+                self.mqtt_client.disconnect()
+            # loop_stop() must be called for every loop_start() — without
+            # it the paho-mqtt network thread leaks per reconnect cycle.
+            self.mqtt_client.loop_stop()
         if hasattr(self, 'probe') and self.probe.is_alive():
             self.probe.stop()
             self.probe.join()
 
 
 @click.command()
-@click.option('--config_file', type=str, required=True)
-@click.option('--mqtt_hostname', type=str, required=True)
-@click.option('--mqtt_port', type=int, default=None)
-@click.option('--ca_certificate', type=str, required=False)
-@click.option('--certfile', type=str, required=False)
-@click.option('--keyfile', type=str, required=False)
-@click.option('--no_tls', is_flag=True, default=False)
-@click.option('--loglevel', type=click.Choice(['CRITICAL', 'ERROR', 'WARNING', 'INFO', 'DEBUG'], case_sensitive=False), default='INFO')
+@click.option('--config_file', type=str, required=True,
+              help='Path to userconfig.txt with PROBE_METHODS / PROBE_CAPABILITIES.')
+@click.option('--mqtt_hostname', type=str, default='srv-control-avm', show_default=True,
+              help='MQTT broker hostname or IP.')
+@click.option('--mqtt_port', type=int, default=None,
+              help='MQTT broker port. Default: 8883 (1883 with --no_tls).')
+@click.option('--ca_certificate', type=str, default='ca_certificate.pem', show_default=True,
+              help='Path to CA certificate (PEM) for mTLS.')
+@click.option('--certfile', type=str, default='client_certificate.pem', show_default=True,
+              help='Path to client certificate (PEM) for mTLS.')
+@click.option('--keyfile', type=str, default='client_key.pem', show_default=True,
+              help='Path to client private key (PEM) for mTLS.')
+@click.option('--no_tls', is_flag=True, default=False,
+              help='Disable TLS — for local testing only. Refuses to run against non-localhost without prominent warning.')
+@click.option('--loglevel', type=click.Choice(['CRITICAL', 'ERROR', 'WARNING', 'INFO', 'DEBUG'], case_sensitive=False), default='INFO',
+              help='Python logging level.')
 def main(
         config_file,
         mqtt_hostname,
@@ -243,9 +339,6 @@ def main(
         format='%(asctime)s %(levelname)s %(filename)s:%(lineno)d %(message)s',
         datefmt='%Y-%m-%dT%H:%M:%S%z',
     )
-
-    if not no_tls and not all([ca_certificate, certfile, keyfile]):
-        raise click.UsageError('--ca_certificate, --certfile, and --keyfile are required unless --no_tls is set.')
 
     if mqtt_port is None:
         mqtt_port = 1883 if no_tls else 8883

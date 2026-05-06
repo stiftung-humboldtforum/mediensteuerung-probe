@@ -3,38 +3,59 @@ import shlex
 import json
 import logging
 
-logger = logging.getLogger()
+# Hierarchical logger so test fixtures can attach handlers to a
+# specific scope and `logging.getLogger('humboldt_probe')` still
+# captures everything below it. Re-exported for the rest of the
+# package via `from misc import logger`.
+logger = logging.getLogger('humboldt_probe')
+
+# Probe version. Published as a retained MQTT topic on connect so the
+# manager dashboard can detect fleet-version drift. Sync with
+# pyproject.toml when bumping.
+VERSION = '0.2.0'
 
 
-def get_config(config_file: str) -> dict:
+def get_config(config_file: str) -> dict[str, str]:
     """Parse a userconfig.txt with shell-style KEY="value" lines into
     a dict. Lines starting with '#' (after optional whitespace) are
     treated as comments and skipped. Errors (file missing, parse
     error) yield an empty dict — Probe.__init__ falls back to defaults
     / fail-closed values."""
-    config = {}
+    config: dict = {}
     try:
         with open(config_file) as f:
             content = f.read()
-        # Strip comment lines BEFORE shlex.split, sonst zerlegt shlex
-        # '# Periodische Sensor-Polls' in 6 nutzlose Tokens die als
-        # garbage-Keys im Config-Dict landen.
-        cleaned = '\n'.join(
-            line for line in content.splitlines()
-            if line.strip() and not line.lstrip().startswith('#')
-        )
-        for token in shlex.split(cleaned):
-            var, sep, value = token.partition('=')
-            if not sep:
-                logger.warning('Ignoring config token without "=": %r', token)
-                continue
-            config[var] = value
-    except Exception as e:
-        logger.error('Loading config %s', e)
+    except FileNotFoundError:
+        logger.error('Config file not found: %s', config_file)
+        return config
+    except OSError as e:
+        logger.error('Cannot read config %s: %s', config_file, e)
+        return config
+
+    # Strip comment lines BEFORE shlex.split, sonst zerlegt shlex
+    # '# Periodische Sensor-Polls' in 6 nutzlose Tokens die als
+    # garbage-Keys im Config-Dict landen.
+    cleaned = '\n'.join(
+        line for line in content.splitlines()
+        if line.strip() and not line.lstrip().startswith('#')
+    )
+    try:
+        tokens = shlex.split(cleaned)
+    except ValueError as e:
+        # ValueError = unterminated quote / mismatched escape.
+        logger.error('Config %s parse error: %s', config_file, e)
+        return config
+
+    for token in tokens:
+        var, sep, value = token.partition('=')
+        if not sep:
+            logger.warning('Ignoring config token without "=": %r', token)
+            continue
+        config[var] = value
     return config
 
 
-def parse_payload(payload: bytes) -> tuple[list, dict]:
+def parse_payload(payload: bytes) -> tuple[list[Any], dict[str, Any]]:
     """Decode a manager-command MQTT-Payload into (args, kwargs).
     Expected format: JSON object {"args": [...], "kwargs": {...}}.
     Anything malformed (non-JSON, wrong types, non-string kwargs-keys)
@@ -75,7 +96,7 @@ def make_response(
     return json.dumps(response)
 
 
-def status_response(status: dict) -> str:
+def status_response(status: dict[str, str]) -> str:
     """Wrap a status dict (e.g. {'display': 'ok', 'easire': 'error'})
     in the standard probe-response envelope. Despite the per-key 'error'
     values it carries, the envelope is data-keyed (not error-keyed) —

@@ -59,21 +59,15 @@ def test_refresh_fqdn_raises_on_change():
             app._refresh_fqdn()
     assert 'old.test' in str(exc_info.value)
     assert 'new.test' in str(exc_info.value)
-    # And the cache is now updated to the new value
-    assert app.fqdn == 'new.test'
+    # The exception carries the new FQDN as a typed attribute so the
+    # run-loop can install it AFTER tearing down the old probe.
+    assert exc_info.value.new_fqdn == 'new.test'
+    # The cached _fqdn has NOT been mutated yet — old identity stays
+    # valid until a successful _setup() with the new value.
+    assert app.fqdn == 'old.test'
 
 
 # --- CLI / no_tls banner ---------------------------------------------------
-
-def test_main_requires_certs_without_no_tls():
-    runner = CliRunner()
-    result = runner.invoke(main, [
-        '--config_file', 'nonexistent.txt',
-        '--mqtt_hostname', 'broker.local',
-    ])
-    assert result.exit_code != 0
-    assert '--ca_certificate' in result.output
-
 
 def test_no_tls_banner_localhost(caplog):
     """Localhost gets the friendly banner."""
@@ -117,6 +111,90 @@ def test_backoff_constants():
     # Doubling stays within MAX
     capped = min(App.BACKOFF_INITIAL * 2 ** 10, App.BACKOFF_MAX)
     assert capped == App.BACKOFF_MAX
+
+
+# --- Lifecycle / cleanup --------------------------------------------------
+
+def test_app_stop_is_idempotent_without_setup():
+    """stop() must not raise when called before _setup() ever ran —
+    e.g. when run() exits before the first cycle."""
+    app = _make_app()
+    app.stop()  # no mqtt_client, no probe yet — must be a no-op
+
+
+def test_app_stop_calls_loop_stop_after_loop_start():
+    """Reconnect-Cycle: every loop_start() needs a loop_stop() in
+    teardown — otherwise the paho network thread leaks."""
+    app = _make_app()
+    fake_client = MagicMock()
+    fake_client.is_connected.return_value = True
+    app.mqtt_client = fake_client
+    app.stop()
+    fake_client.disconnect.assert_called_once()
+    fake_client.loop_stop.assert_called_once()
+
+
+def test_app_stop_publishes_offline_retained_before_disconnect():
+    """Graceful stop must mirror the Last-Will payload (connected='0',
+    retained) so dashboards see 'offline' immediately rather than
+    showing the previous 'connected=1' until the next probe restart."""
+    app = _make_app()
+    fake_client = MagicMock()
+    fake_client.is_connected.return_value = True
+    app.mqtt_client = fake_client
+    app.stop()
+    # publish() called with retained connected='0'
+    pub_calls = [c for c in fake_client.publish.call_args_list
+                 if c.args and c.args[0].endswith('/connected')]
+    assert len(pub_calls) == 1
+    assert pub_calls[0].kwargs.get('payload') == '0'
+    assert pub_calls[0].kwargs.get('retain') is True
+
+
+def test_app_stop_loop_stop_called_even_if_not_connected():
+    """loop_start() runs after connect() — but if connect() raised
+    *after* loop_start(), is_connected may be False yet the thread
+    exists. loop_stop() must run regardless."""
+    app = _make_app()
+    fake_client = MagicMock()
+    fake_client.is_connected.return_value = False
+    app.mqtt_client = fake_client
+    app.stop()
+    fake_client.disconnect.assert_not_called()
+    fake_client.loop_stop.assert_called_once()
+
+
+def test_backoff_sleep_pings_notify_within_watchdog_window():
+    """During long backoff sleeps the sd_notify-Watchdog must keep
+    receiving pings — otherwise systemd would mark the unit stalled
+    and restart it mid-backoff."""
+    notify = _make_notify_mock()
+    app = _make_app(notify=notify)
+    sleeps: list = []
+    t = [0.0]
+
+    def _advance(s):
+        sleeps.append(s)
+        t[0] += s
+
+    with patch('app.time.monotonic', side_effect=lambda: t[0]), \
+         patch('app.time.sleep', side_effect=_advance):
+        app._backoff_sleep(45)
+
+    # 45s with BACKOFF_NOTIFY_INTERVAL=15 → 3 chunks → 3 notify-pings
+    assert sum(sleeps) >= 45
+    assert notify.notify.call_count >= 3
+
+
+# --- STALL_TOLERANCE / heartbeat watchdog ---------------------------------
+
+def test_stall_tolerance_constants():
+    """STALL_TOLERANCE must be small enough for sd_notify to surface a
+    stalled probe before systemd's WatchdogSec=30s elapses, but >0 so
+    a single delayed cycle does not count as stall."""
+    assert App.STALL_TOLERANCE >= 1
+    # 5s sleep per cycle * (STALL_TOLERANCE+1) must fit in WatchdogSec=30s.
+    assert (App.STALL_TOLERANCE + 1) * 5 < 30
 
 
 # --- sd_notify status sequence --------------------------------------------

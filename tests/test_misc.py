@@ -129,3 +129,18 @@ def test_get_config_token_without_equals_ignored(tmp_path):
     config_file.write_text('VALID="ok"\nstray_token_no_equals\n')
     config = get_config(str(config_file))
     assert config == {'VALID': 'ok'}
+
+
+def test_get_config_unterminated_quote_returns_empty(tmp_path):
+    """shlex raises ValueError on mismatched quotes — get_config must
+    return {} instead of crashing the probe at startup."""
+    config_file = tmp_path / 'broken.txt'
+    config_file.write_text('PROBE_METHODS="ping,uptime\n')  # unterminated quote
+    config = get_config(str(config_file))
+    assert config == {}
+
+
+def test_get_config_unreadable_file_returns_empty(tmp_path):
+    """OS-level read errors yield an empty dict (fail-closed)."""
+    config = get_config(str(tmp_path))  # directory, not a file
+    assert config == {}

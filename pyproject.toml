@@ -14,7 +14,7 @@ name = "humboldt-probe"
 version = "0.2.0"
 description = "MQTT health/control agent for AV/Digital Media installations at Humboldt Forum"
 readme = "README.md"
-requires-python = ">=3.9"
+requires-python = ">=3.9,<3.14"
 authors = [
     {name = "Stiftung Humboldtforum"},
 ]
@@ -36,7 +36,7 @@ dependencies = [
     "sd-notify==0.1.0; sys_platform == 'linux'",
     "psutil>=5.9.0,<8.0.0",
     "click>=8.0.0,<9.0.0",
-    "pycaw>=20240210; sys_platform == 'win32'",
+    "pycaw>=20240210,<20270101; sys_platform == 'win32'",
     "comtypes>=1.2.0,<2.0.0; sys_platform == 'win32'",
     "pythonnet>=3.0.0,<4.0.0; sys_platform == 'win32'",
 ]
@@ -62,7 +62,7 @@ filterwarnings = [
     "error::DeprecationWarning",
 ]
 markers = [
-    "integration: requires a running MQTT broker (PROBE_TEST_BROKER:PROBE_TEST_PORT, default 127.0.0.1:11883). Auto-skipped if no broker is reachable. Run with: docker compose -f docker-compose.test.yml up -d, then pytest -m integration.",
+    "integration: requires a running MQTT broker (PROBE_TEST_BROKER:PROBE_TEST_PORT, default 127.0.0.1:11883). Auto-skipped if no broker is reachable. Run with: mosquitto -p 11883 -v &, then pytest -m integration.",
     "probe_config(methods, capabilities): override the running_probe-fixture's PROBE_METHODS / PROBE_CAPABILITIES for this test.",
 ]
 

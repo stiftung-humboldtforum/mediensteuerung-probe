@@ -1,9 +1,9 @@
 """Windows-specific sensor and command implementations."""
 import ctypes
 import ctypes.wintypes
+import hashlib
 import os
 import subprocess
-import sys
 import time
 from typing import Optional
 
@@ -56,6 +56,53 @@ def reboot() -> None:
 # --- LibreHardwareMonitor (CPU/GPU temps + fans) --------------------------
 
 _lhm_computer = None
+# Cache the verified DLL set so we don't re-hash + re-spam the log
+# every 5s when LHM-sensors poll. Once verified successfully for a
+# given lib_path, the result is sticky for the process lifetime.
+_dll_hashes_verified: set[str] = set()
+
+
+def _verify_dll_hashes(lib_path: str) -> None:
+    """Verify SHA256 hashes of bundled .NET DLLs against
+    lib/win32/SHA256SUMS. Raises RuntimeError on mismatch — guards
+    against tampered DLLs being silently loaded into the probe process.
+
+    Idempotent: result cached per lib_path to keep the per-cycle
+    sensor-poll path cheap.
+    """
+    if lib_path in _dll_hashes_verified:
+        return
+    manifest = os.path.join(lib_path, 'SHA256SUMS')
+    if not os.path.isfile(manifest):
+        raise RuntimeError(f'Hash manifest not found: {manifest}')
+    with open(manifest, 'r') as f:
+        expected = {}
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith('#'):
+                continue
+            digest, _, name = line.partition(' ')
+            name = name.lstrip('*').strip()
+            digest = digest.strip()
+            # Reject path-traversal / absolute paths in the filename
+            # column — only basenames inside lib_path are allowed.
+            if not name or name != os.path.basename(name) or os.path.isabs(name):
+                raise RuntimeError(f'Invalid manifest entry: {name!r}')
+            if len(digest) != 64 or not all(c in '0123456789abcdef' for c in digest.lower()):
+                raise RuntimeError(f'Invalid SHA256 digest for {name!r}: {digest!r}')
+            expected[name] = digest.lower()
+    for name, want in expected.items():
+        path = os.path.join(lib_path, name)
+        h = hashlib.sha256()
+        with open(path, 'rb') as f:
+            for chunk in iter(lambda: f.read(65536), b''):
+                h.update(chunk)
+        got = h.hexdigest()
+        if got != want:
+            raise RuntimeError(
+                f'DLL hash mismatch for {name}: expected {want}, got {got}'
+            )
+    _dll_hashes_verified.add(lib_path)
 
 
 def _get_lhm_computer():
@@ -65,10 +112,15 @@ def _get_lhm_computer():
     global _lhm_computer
     if _lhm_computer is None:
         import clr
-        lib_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', 'lib', 'win32')
-        if lib_path not in sys.path:
-            sys.path.append(lib_path)
-        clr.AddReference('LibreHardwareMonitorLib')
+        # Resolve the bundled DLL by absolute path. Avoids polluting
+        # sys.path (where a writable directory could shadow the assembly
+        # via a malicious DLL of the same name).
+        lib_path = os.path.normpath(
+            os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', 'lib', 'win32')
+        )
+        _verify_dll_hashes(lib_path)
+        dll_path = os.path.join(lib_path, 'LibreHardwareMonitorLib.dll')
+        clr.AddReference(dll_path)
         from LibreHardwareMonitor.Hardware import Computer
         c = Computer()
         c.IsCpuEnabled = True

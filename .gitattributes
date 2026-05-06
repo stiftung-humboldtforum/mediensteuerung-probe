@@ -1,0 +1,16 @@
+# Default: detect text and normalize to LF in the index, native line
+# endings in the working tree. Prevents CRLF leaks from Windows checkouts.
+* text=auto eol=lf
+
+# PowerShell scripts keep CRLF (Windows-native).
+*.ps1 text eol=crlf
+*.bat text eol=crlf
+
+# Shell scripts always LF (Linux-native).
+*.sh text eol=lf
+
+# Pinned LF: hash manifest must stay LF so `sha256sum -c` works on Linux.
+SHA256SUMS text eol=lf
+
+# Treat DLLs as binary so git does no line-ending magic.
+*.dll binary

@@ -25,7 +25,7 @@ def test_linux_shutdown_calls_sudo_shutdown_now(mock_run):
     mock_run.return_value.returncode = 0
     _linux.shutdown()
     args = mock_run.call_args[0][0]
-    assert args == ['sudo', 'shutdown', 'now']
+    assert args == ['sudo', '/sbin/shutdown', 'now']
 
 
 @patch('methods._linux.subprocess.run')
@@ -33,7 +33,7 @@ def test_linux_reboot_calls_sudo_reboot_now(mock_run):
     mock_run.return_value.returncode = 0
     _linux.reboot()
     args = mock_run.call_args[0][0]
-    assert args == ['sudo', 'reboot', 'now']
+    assert args == ['sudo', '/sbin/reboot', 'now']
 
 
 @patch('methods._linux.subprocess.run')
@@ -56,6 +56,7 @@ def test_linux_reboot_raises_RuntimeError_on_nonzero_rc(mock_run):
 
 @patch('methods._linux.subprocess.run')
 def test_linux_mute_calls_wpctl(mock_run):
+    mock_run.return_value.returncode = 0
     _linux.mute()
     args = mock_run.call_args[0][0]
     assert args == ['wpctl', 'set-mute', '@DEFAULT_AUDIO_SINK@', '1']
@@ -66,9 +67,26 @@ def test_linux_mute_calls_wpctl(mock_run):
 
 @patch('methods._linux.subprocess.run')
 def test_linux_unmute_calls_wpctl(mock_run):
+    mock_run.return_value.returncode = 0
     _linux.unmute()
     args = mock_run.call_args[0][0]
     assert args == ['wpctl', 'set-mute', '@DEFAULT_AUDIO_SINK@', '0']
+
+
+@patch('methods._linux.subprocess.run')
+def test_linux_mute_raises_on_nonzero_rc(mock_run):
+    mock_run.return_value.returncode = 1
+    mock_run.return_value.stderr = 'PipeWire daemon not running'
+    with pytest.raises(RuntimeError, match='mute failed.*PipeWire'):
+        _linux.mute()
+
+
+@patch('methods._linux.subprocess.run')
+def test_linux_unmute_raises_on_nonzero_rc(mock_run):
+    mock_run.return_value.returncode = 1
+    mock_run.return_value.stderr = 'no default sink'
+    with pytest.raises(RuntimeError, match='unmute failed.*sink'):
+        _linux.unmute()
 
 
 # --- Display (xrandr env + timeout) ---------------------------------------

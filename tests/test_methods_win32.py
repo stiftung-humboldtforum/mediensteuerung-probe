@@ -43,6 +43,25 @@ def _stub_win_modules():
 _WIN_MOCKS = _stub_win_modules()
 
 
+@pytest.fixture(autouse=True)
+def _reset_win_mocks_and_lhm():
+    """Per-test isolation: reset module-level mocks (pycaw_pycaw, lhm_hw),
+    clear cached _lhm_computer, and clear _dll_hashes_verified so
+    leftover MagicMock or hash-cache state from one test cannot bleed
+    into the next (LHM-mocks chain through SubHardware/Sensors lists
+    that retain references; the hash cache is a process-level set that
+    sticks once a lib_path verifies)."""
+    _WIN_MOCKS['pycaw_pycaw'].reset_mock(return_value=True, side_effect=True)
+    _WIN_MOCKS['lhm_hw'].reset_mock(return_value=True, side_effect=True)
+    try:
+        from methods import _win32
+        _win32._lhm_computer = None
+        _win32._dll_hashes_verified.clear()
+    except ImportError:
+        pass
+    yield
+
+
 # --- Audio -----------------------------------------------------------------
 
 def test_win32_is_muted_calls_pycaw_GetMute():
@@ -233,6 +252,80 @@ def test_win32_display_returns_resolution_string(mock_ctypes):
 
     result = _win32.display()
     assert result == '1920x1080, 60 Hz'
+
+
+# --- DLL hash verification ------------------------------------------------
+
+def test_verify_dll_hashes_ok(tmp_path):
+    """Manifest matches actual file hashes → no exception, set entry added."""
+    from methods import _win32
+    _win32._dll_hashes_verified.clear()
+
+    dll = tmp_path / 'fake.dll'
+    dll.write_bytes(b'\x00\x01\x02\x03')
+    import hashlib
+    digest = hashlib.sha256(dll.read_bytes()).hexdigest()
+    (tmp_path / 'SHA256SUMS').write_text(f'{digest} *fake.dll\n')
+
+    _win32._verify_dll_hashes(str(tmp_path))
+    assert str(tmp_path) in _win32._dll_hashes_verified
+
+
+def test_verify_dll_hashes_mismatch_raises(tmp_path):
+    from methods import _win32
+    _win32._dll_hashes_verified.clear()
+
+    (tmp_path / 'fake.dll').write_bytes(b'tampered')
+    bogus = '0' * 64
+    (tmp_path / 'SHA256SUMS').write_text(f'{bogus} *fake.dll\n')
+
+    with pytest.raises(RuntimeError, match='hash mismatch'):
+        _win32._verify_dll_hashes(str(tmp_path))
+
+
+def test_verify_dll_hashes_missing_manifest_raises(tmp_path):
+    from methods import _win32
+    _win32._dll_hashes_verified.clear()
+    with pytest.raises(RuntimeError, match='Hash manifest not found'):
+        _win32._verify_dll_hashes(str(tmp_path))
+
+
+def test_verify_dll_hashes_path_traversal_rejected(tmp_path):
+    """Manifest with `../` in filename column must be refused — the
+    DLL outside lib_path could be a system file the attacker chose."""
+    from methods import _win32
+    _win32._dll_hashes_verified.clear()
+
+    (tmp_path / 'SHA256SUMS').write_text(f'{"0"*64} *../etc/passwd\n')
+    with pytest.raises(RuntimeError, match='Invalid manifest entry'):
+        _win32._verify_dll_hashes(str(tmp_path))
+
+
+def test_verify_dll_hashes_invalid_digest_rejected(tmp_path):
+    from methods import _win32
+    _win32._dll_hashes_verified.clear()
+
+    (tmp_path / 'fake.dll').write_bytes(b'')
+    (tmp_path / 'SHA256SUMS').write_text('not-a-hex-digest *fake.dll\n')
+    with pytest.raises(RuntimeError, match='Invalid SHA256 digest'):
+        _win32._verify_dll_hashes(str(tmp_path))
+
+
+def test_verify_dll_hashes_cached(tmp_path):
+    """Second call must short-circuit (no re-hash) if already verified."""
+    from methods import _win32
+    _win32._dll_hashes_verified.clear()
+
+    dll = tmp_path / 'fake.dll'
+    dll.write_bytes(b'first content')
+    import hashlib
+    digest = hashlib.sha256(dll.read_bytes()).hexdigest()
+    (tmp_path / 'SHA256SUMS').write_text(f'{digest} *fake.dll\n')
+    _win32._verify_dll_hashes(str(tmp_path))
+
+    # Tamper after first call — second call must NOT re-detect
+    dll.write_bytes(b'tampered after first verify')
+    _win32._verify_dll_hashes(str(tmp_path))  # cached → no exception
 
 
 @patch('methods._win32.ctypes')

@@ -32,6 +32,42 @@ def test_probe_allowed_methods():
     assert probe._allowed_methods == {'mute', 'unmute', 'reboot'}
 
 
+def test_probe_methods_strips_whitespace():
+    """'mute, unmute' (operator-formatted) must parse same as 'mute,unmute'."""
+    probe = _make_probe(methods='ping, temperatures , fans', capabilities='mute, unmute')
+    assert 'ping' in probe.methods
+    assert 'temperatures' in probe.methods
+    assert 'fans' in probe.methods
+    assert probe._allowed_methods == {'mute', 'unmute'}
+
+
+def test_probe_unknown_capabilities_logged(caplog):
+    """Capability typo (e.g. 'reebot') must surface a warning so operators
+    catch the mistake in journalctl rather than discovering the missing
+    button only when they try to use it."""
+    import logging
+    with caplog.at_level(logging.WARNING):
+        _make_probe(capabilities='mute,reeboot,wake')
+    messages = [r.getMessage() for r in caplog.records]
+    assert any('unknown commands' in m and 'reeboot' in m for m in messages)
+
+
+def test_probe_version_published_on_connect():
+    """on_connect must publish probe/<fqdn>/version retained — manager
+    fleet-dashboard relies on it for version-drift detection."""
+    from misc import VERSION
+    probe = _make_probe()
+    probe.on_connect(probe.client, None, flags=Mock(), reason_code=0)
+    publish_calls = probe.client.publish.call_args_list
+    version_topic_calls = [c for c in publish_calls if c.args[0].endswith('/version')]
+    assert len(version_topic_calls) == 1
+    call = version_topic_calls[0]
+    # Publish keyword args: payload, qos, retain
+    assert call.kwargs.get('payload') == VERSION
+    assert call.kwargs.get('retain') is True
+    assert call.kwargs.get('qos') == 1
+
+
 def test_on_disconnect_sets_flag():
     probe = _make_probe()
     probe.is_connected = True
