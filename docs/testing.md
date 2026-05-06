@@ -50,7 +50,7 @@ pytest --cov --cov-report=html         # htmlcov/index.html
 ```
 
 `_win32.py` ist via `[tool.coverage.run].omit` rausgenommen — auf
-Linux/macOS-CI nie ausfuehrbar.
+Linux-CI nie ausfuehrbar.
 
 ---
 
@@ -78,7 +78,6 @@ Tests skippen automatisch wenn kein Broker erreichbar ist.
 ### Broker starten
 
 ```bash
-# macOS:        brew install mosquitto && mosquitto -p 11883 -v
 # Debian/Ubu:   sudo apt install mosquitto && mosquitto -p 11883 -v
 # Windows:      winget install EclipseFoundation.Mosquitto
 #               mosquitto -p 11883 -v
@@ -243,8 +242,8 @@ mosquitto_sub -h <broker> -p 8883 \
 2. **`subprocess.TimeoutExpired`** — Tool unresponsive. Lokal fast
    immer X-Server / PipeWire / mpv-IPC nicht erreichbar.
 3. **`AttributeError: ... has no attribute 'sensors_temperatures'`** —
-   psutil-Funktion nicht auf der Plattform verfuegbar (z.B. macOS).
-   Tests sind gemockt, in Production greift `_stub`.
+   psutil-Funktion nicht auf der Plattform verfuegbar. Tests sind
+   gemockt; in Production failed der Probe-Import auf nicht-Linux/Win.
 4. **`paho.mqtt.client.Client` Callback-Signatur-Fehler** — paho-mqtt
    1.x vs 2.x Mismatch. Wir sind auf 2.x mit `VERSION2`.
 

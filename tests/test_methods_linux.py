@@ -1,14 +1,13 @@
-"""Mock-based tests for methods/_linux.py — komplementaer zu
-tests/test_methods.py (welches schon is_muted/uptime/temperatures/
-fans/display abdeckt).
+"""Mock-based tests for methods/_linux.py — complement to
+tests/test_methods.py (which already covers is_muted / uptime /
+temperatures / fans / display).
 
-Diese Datei ergaenzt die fehlenden Pfade:
-- shutdown/reboot (sudo-Aufrufe + RuntimeError-Handling)
-- mute/unmute (wpctl-Aufrufe)
-- display-env + display-timeout (Detail-Verifikation)
+This file fills in:
+- shutdown/reboot (sudo invocations + RuntimeError handling)
+- mute/unmute (wpctl invocations)
+- display env + display timeout details
 
-Zusammen mit test_methods.py erreicht _linux.py jetzt ~95% Coverage
-ohne echte PipeWire/X11/sudo-Hardware.
+Together they cover _linux.py without real PipeWire/X11/sudo hardware.
 """
 import subprocess
 from unittest.mock import patch
@@ -60,8 +59,7 @@ def test_linux_mute_calls_wpctl(mock_run):
     _linux.mute()
     args = mock_run.call_args[0][0]
     assert args == ['wpctl', 'set-mute', '@DEFAULT_AUDIO_SINK@', '1']
-    # timeout muss gesetzt sein damit ein PipeWire-Hang nicht den
-    # Probe-Thread blockiert (R1)
+    # Timeout must be set so a PipeWire hang doesn't block the polling loop.
     assert mock_run.call_args[1].get('timeout') == 3
 
 
@@ -100,8 +98,8 @@ HDMI-0 connected primary 1920x1080+0+0 (normal left inverted right x axis y axis
 
 @patch('methods._linux.subprocess.run')
 def test_linux_display_passes_DISPLAY_env(mock_run):
-    """display() muss DISPLAY=:0 in env mitsetzen (sonst sieht xrandr
-    nichts wenn die Probe als root/systemd-User ohne $DISPLAY laeuft)."""
+    """display() must pass DISPLAY=:0 in env — otherwise xrandr sees
+    nothing when the probe runs as a systemd user without $DISPLAY."""
     mock_run.return_value = subprocess.CompletedProcess(
         args=['xrandr', '--current'], returncode=0,
         stdout=_XRANDR_OUTPUT, stderr=b'',
@@ -113,7 +111,7 @@ def test_linux_display_passes_DISPLAY_env(mock_run):
 
 @patch('methods._linux.subprocess.run')
 def test_linux_display_has_timeout(mock_run):
-    """xrandr-Hang darf den Probe-Thread nicht blockieren (R1)."""
+    """An xrandr hang must not block the polling loop."""
     mock_run.return_value = subprocess.CompletedProcess(
         args=['xrandr', '--current'], returncode=0,
         stdout=_XRANDR_OUTPUT, stderr=b'',

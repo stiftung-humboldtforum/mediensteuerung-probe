@@ -3,32 +3,23 @@
 The bulk of this module exists for the @pytest.mark.integration tests
 in tests/test_integration.py. Unit tests don't touch any of it.
 
-== Sections ==
-    1. Configuration   — env-vars (PROBE_TEST_BROKER/PORT)
-    2. Pytest hooks    — pytest_collection_modifyitems skips
-                         integration tests when no broker is reachable
-    3. MQTT fixtures   — mqtt_subscriber (event-driven, min_count),
-                         mqtt_publisher
-    4. Probe fixture   — running_probe: spawns src/app.py as a
-                         subprocess, with subprocess-coverage hooked
-                         and PROBE_MQTT_KEEPALIVE=5 for fast Last-Will
-    5. TLS-Broker      — separate mosquitto with self-signed CA +
-                         require_certificate=true for the mTLS
-                         integration test (tests/_certs.py)
+Sections:
+  1. Configuration   — env-vars (PROBE_TEST_BROKER/PORT)
+  2. Pytest hooks    — skip integration tests when no broker reachable
+  3. MQTT fixtures   — mqtt_subscriber, mqtt_publisher
+  4. Probe fixture   — running_probe spawns src/app.py as a subprocess
 
 Integration tests need an externally running MQTT broker. Point
 PROBE_TEST_BROKER / PROBE_TEST_PORT at it (default 127.0.0.1:11883).
 If no broker is reachable, integration tests are skipped automatically.
 
-  mosquitto -p 11883 -v &                           # external process
+  mosquitto -p 11883 -v &
   PROBE_TEST_BROKER=staging.mqtt PROBE_TEST_PORT=1883 pytest -m integration
 """
 import os
-import shutil
 import socket
 import subprocess
 import sys
-import tempfile
 import time
 from pathlib import Path
 
@@ -89,10 +80,6 @@ def mqtt_subscriber():
     - If min_count > 0: returns as soon as min_count messages have been
       collected (or timeout, whichever comes first).
     - If min_count == 0: collects for the full timeout (back-compat).
-
-    Used like:
-        msgs = subscribe('probe/+/connected', timeout=5, min_count=1)
-        assert msgs[0].payload == b'1'
     """
     from threading import Event
     clients = []
@@ -122,10 +109,8 @@ def mqtt_subscriber():
         client.loop_start()
         clients.append(client)
 
-        # Warte auf den Subscribe-Handshake bevor wir die Timeout-Uhr
-        # starten — sonst würden frühe retained messages verpasst.
-        # Handshake-Wait darf nicht das gesamte Caller-Timeout aufbrauchen,
-        # darf aber auch nicht zu kurz sein für langsame Broker.
+        # Wait for the subscribe-handshake before starting the timeout
+        # clock — otherwise early retained messages are missed.
         handshake_timeout = max(5.0, min(timeout, 30.0))
         if not ready.wait(timeout=handshake_timeout):
             raise TimeoutError(
@@ -147,9 +132,7 @@ def mqtt_subscriber():
 
 @pytest.fixture
 def mqtt_publisher():
-    """One-shot publisher. Used like:
-        publish('manager/host/ping', '')
-    """
+    """One-shot publisher. Used like: publish('manager/host/ping', '')"""
     client = mqtt.Client(
         callback_api_version=mqtt.CallbackAPIVersion.VERSION2,
         client_id='pytest-pub',
@@ -178,12 +161,6 @@ def running_probe(request, tmp_path):
 
     Tests can override PROBE_METHODS / PROBE_CAPABILITIES via
     @pytest.mark.probe_config(methods=..., capabilities=...).
-
-    Example:
-        @pytest.mark.probe_config(capabilities='os,subprocess,call_method')
-        def test_whitelist_gate(running_probe, ...):
-            # 'os' is in capabilities → Capability-Gate lets it through,
-            # but COMMANDS-Whitelist rejects it as 'Unknown method'
     """
     marker = request.node.get_closest_marker('probe_config')
     if marker:
@@ -199,29 +176,12 @@ def running_probe(request, tmp_path):
         f'PROBE_CAPABILITIES="{caps_csv}"\n'
     )
 
-    # Eindeutiger client_id pro Test damit parallele Runs nicht
-    # kollidieren (gleicher FQDN + gleicher broker = zweite Connect
-    # kickt erste raus).
-    fqdn = f'integration-test-{os.getpid()}-{id(tmp_path)}'
-
-    # tests/-Verzeichnis auf PYTHONPATH damit der Subprocess das
-    # tests/sitecustomize.py findet, das den COVERAGE_PROCESS_START-
-    # Hook installiert. SRC_DIR fuer den eigentlichen Probe-Code.
-    tests_dir = Path(__file__).parent
     env = {
         **os.environ,
-        'PYTHONPATH': os.pathsep.join([str(tests_dir), str(SRC_DIR)]),
-        # Subprocess-Coverage: zeigt sitecustomize an pyproject's
-        # [tool.coverage.run]-Konfig. parallel=true sorgt dafuer dass
-        # die Daten in .coverage.<pid> Fragmenten landen, die pytest-cov
-        # via combine zusammenfuehrt.
-        'COVERAGE_PROCESS_START': str(Path(__file__).parent.parent / 'pyproject.toml'),
-        # Kurzes MQTT-Keepalive (5s) damit der Last-Will-Test nicht
-        # 90s warten muss bis der Broker die Session als tot deklariert.
+        'PYTHONPATH': str(SRC_DIR),
+        # Short MQTT keepalive so the Last-Will test does not have to
+        # wait the broker default (~90s) for the session to expire.
         'PROBE_MQTT_KEEPALIVE': os.environ.get('PROBE_MQTT_KEEPALIVE', '5'),
-        # FQDN wird via socket.getfqdn() gelesen — unter macOS/Linux
-        # kein env-Override. Tests müssen mit dem real-FQDN leben oder
-        # den Probe-Output auf dem Topic-Pfad probe/+/... matchen.
     }
 
     proc = subprocess.Popen(
@@ -231,7 +191,7 @@ def running_probe(request, tmp_path):
             '--mqtt_hostname', BROKER_HOST,
             '--mqtt_port', str(BROKER_PORT),
             '--no_tls',
-            '--loglevel', 'WARNING',  # weniger noise im Test-Output
+            '--loglevel', 'WARNING',
         ],
         env=env,
         stdout=subprocess.PIPE,
@@ -239,8 +199,6 @@ def running_probe(request, tmp_path):
         text=True,
     )
 
-    # Warte bis die Probe wirklich connected ist — wir checken via
-    # MQTT (das Subscribe greift retained=True topics sofort).
     if not _wait_for_probe_connected(timeout=10):
         proc.terminate()
         try:
@@ -255,24 +213,19 @@ def running_probe(request, tmp_path):
 
     yield proc
 
-    # Sauberer Shutdown via terminate() — auf POSIX SIGTERM,
-    # auf Windows TerminateProcess. Plattform-portabel.
-    # communicate() statt wait(), damit stdout drained wird — sonst
-    # blockt subprocess.write() auf vollem Pipe-Buffer (~65 KB) und
-    # proc.wait() blockt darauf wartend, dass das write fertig wird:
-    # Deadlock.
+    # Use communicate() so stdout is drained — proc.wait() blocks if the
+    # subprocess buffer (~65 KB) fills, since the parent never reads it.
     proc.terminate()
     try:
         proc.communicate(timeout=5)
     except subprocess.TimeoutExpired:
-        proc.kill()  # POSIX SIGKILL / Windows TerminateProcess (force)
+        proc.kill()
         proc.communicate()
 
 
 def _wait_for_probe_connected(timeout: float = 10.0) -> bool:
-    """Wait for any probe/+/connected = '1' within timeout. Returns
-    immediately as soon as the message arrives (event-driven, no
-    polling)."""
+    """Wait for any probe/+/connected = '1' within timeout. Event-driven,
+    not polled."""
     from threading import Event
     seen = Event()
 
@@ -296,97 +249,3 @@ def _wait_for_probe_connected(timeout: float = 10.0) -> bool:
     finally:
         client.loop_stop()
         client.disconnect()
-
-
-# =====================================================================
-# 5. TLS-Broker (separate mosquitto with self-signed CA + mTLS)
-# =====================================================================
-
-@pytest.fixture(scope='session')
-def tls_broker(tmp_path_factory):
-    """Spawns a separate TLS-enabled mosquitto on a free port for the
-    duration of the test session. Generates self-signed CA + server +
-    client certs via cryptography lib (no openssl-CLI dependency).
-
-    Yields a SimpleNamespace with .host, .port, .ca, .client_cert,
-    .client_key paths. Caller can use these as App-CLI args and as
-    paho-mqtt tls_set() inputs.
-
-    Skips the dependent test if mosquitto is not on PATH.
-    """
-    from types import SimpleNamespace
-    sys.path.insert(0, str(Path(__file__).parent))
-    import _certs  # type: ignore[import-not-found]
-
-    mosquitto_bin = shutil.which('mosquitto')
-    if not mosquitto_bin:
-        pytest.skip('mosquitto not on PATH — TLS-integration test requires it')
-
-    cert_dir = tmp_path_factory.mktemp('tls-certs')
-    paths = _certs.make_ca_and_certs(cert_dir)
-
-    # Pick a free port distinct from BROKER_PORT
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.bind((BROKER_HOST, 0))
-        tls_port = s.getsockname()[1]
-
-    # Mosquitto-config mit TLS + require_certificate (mTLS).
-    config_dir = tempfile.mkdtemp(prefix='humboldt-tls-broker-')
-    config_path = os.path.join(config_dir, 'broker.conf')
-    log_path = os.path.join(config_dir, 'mosquitto.log')
-    with open(config_path, 'w') as f:
-        f.write(
-            f'listener {tls_port} {BROKER_HOST}\n'
-            f'cafile {paths["ca"]}\n'
-            f'certfile {paths["server_cert"]}\n'
-            f'keyfile {paths["server_key"]}\n'
-            'require_certificate true\n'
-            'allow_anonymous true\n'
-            'persistence false\n'
-        )
-
-    log = open(log_path, 'w')
-    proc = subprocess.Popen(
-        [mosquitto_bin, '-c', config_path],
-        stdout=log,
-        stderr=subprocess.STDOUT,
-    )
-
-    # Wait for the TLS broker to accept connections (TCP-bound = ready)
-    deadline = time.monotonic() + 6.0
-    while time.monotonic() < deadline:
-        if _broker_reachable(BROKER_HOST, tls_port):
-            break
-        if proc.poll() is not None:
-            log.close()
-            with open(log_path) as f:
-                log_content = f.read()
-            shutil.rmtree(config_dir, ignore_errors=True)
-            pytest.fail(
-                f'TLS-mosquitto exited rc={proc.returncode}:\n{log_content}'
-            )
-        time.sleep(0.1)
-    else:
-        proc.terminate()
-        log.close()
-        shutil.rmtree(config_dir, ignore_errors=True)
-        pytest.fail(f'TLS-mosquitto not reachable on {BROKER_HOST}:{tls_port}')
-
-    handle = SimpleNamespace(
-        host=BROKER_HOST,
-        port=tls_port,
-        ca=str(paths['ca']),
-        client_cert=str(paths['client_cert']),
-        client_key=str(paths['client_key']),
-    )
-
-    yield handle
-
-    proc.terminate()
-    try:
-        proc.wait(timeout=5)
-    except subprocess.TimeoutExpired:
-        proc.kill()
-        proc.wait()
-    log.close()
-    shutil.rmtree(config_dir, ignore_errors=True)

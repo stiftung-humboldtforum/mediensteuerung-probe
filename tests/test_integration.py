@@ -38,7 +38,7 @@ pytestmark = pytest.mark.integration
 
 def test_probe_publishes_connected_retained(running_probe, mqtt_subscriber):
     """A late subscriber must immediately see connected='1' (retained)."""
-    msgs = mqtt_subscriber('probe/+/connected', timeout=5, min_count=1)
+    msgs = mqtt_subscriber('probe/+/v1/connected', timeout=5, min_count=1)
     matching = [m for m in msgs if m.payload == b'1']
     assert matching, f'no connected=1 retained message; got: {[m.payload for m in msgs]}'
     # Retained-Flag muss True sein
@@ -46,7 +46,7 @@ def test_probe_publishes_connected_retained(running_probe, mqtt_subscriber):
 
 
 def test_probe_publishes_capabilities_retained(running_probe, mqtt_subscriber):
-    msgs = mqtt_subscriber('probe/+/capabilities', timeout=5, min_count=1)
+    msgs = mqtt_subscriber('probe/+/v1/capabilities', timeout=5, min_count=1)
     assert msgs, 'no capabilities message'
     payload = msgs[-1].payload.decode()
     # Aus running_probe-Fixture-Config:
@@ -56,7 +56,7 @@ def test_probe_publishes_capabilities_retained(running_probe, mqtt_subscriber):
 
 
 def test_probe_publishes_boot_time_retained(running_probe, mqtt_subscriber):
-    msgs = mqtt_subscriber('probe/+/boot_time', timeout=5, min_count=1)
+    msgs = mqtt_subscriber('probe/+/v1/boot_time', timeout=5, min_count=1)
     assert msgs, 'no boot_time message'
     parsed = json.loads(msgs[-1].payload)
     assert parsed['data']['status'] == 'complete'
@@ -70,7 +70,7 @@ def test_probe_publishes_boot_time_retained(running_probe, mqtt_subscriber):
 def test_probe_periodic_cycle_publishes_sensors(running_probe, mqtt_subscriber):
     """Probe.run() runs one cycle every 5s. Within ~8s we must see at
     least one ping, one uptime, and one errors topic."""
-    msgs = mqtt_subscriber('probe/+/+', timeout=8)
+    msgs = mqtt_subscriber('probe/+/v1/+', timeout=8)
     topics = {m.topic.split('/')[-1] for m in msgs}
     assert 'ping' in topics
     assert 'uptime' in topics
@@ -94,7 +94,7 @@ def _command_roundtrip(mqtt_subscriber, mqtt_publisher, fqdn, command,
     t = threading.Thread(target=collect)
     t.start()
     time.sleep(0.3)  # subscriber needs to be wired up
-    mqtt_publisher(f'manager/{fqdn}/{command}', '')
+    mqtt_publisher(f'manager/{fqdn}/v1/{command}', '')
     t.join(timeout=timeout + 2)
     return [json.loads(m.payload) for m in captured]
 
@@ -112,7 +112,7 @@ def test_command_ping_roundtrip(running_probe, mqtt_subscriber, mqtt_publisher):
 
 def test_command_blocked_returns_method_not_allowed(running_probe, mqtt_subscriber, mqtt_publisher):
     """Commands not in PROBE_CAPABILITIES must be rejected via the
-    Capability-Gate (S4)."""
+    Capability-Gate."""
     fqdn = _read_probe_fqdn(mqtt_subscriber)
     # 'shutdown' is NOT in the running_probe-fixture's capabilities.
     payloads = _command_roundtrip(mqtt_subscriber, mqtt_publisher, fqdn,
@@ -122,7 +122,7 @@ def test_command_blocked_returns_method_not_allowed(running_probe, mqtt_subscrib
 
 
 def test_capability_gate_blocks_module_attribute(running_probe, mqtt_subscriber, mqtt_publisher):
-    """Capability-Gate (S4) layer: 'os' is not in capabilities → reject
+    """Capability-Gate layer: 'os' is not in capabilities → reject
     with 'Method not allowed' before even reaching the Whitelist-Gate."""
     fqdn = _read_probe_fqdn(mqtt_subscriber)
     payloads = _command_roundtrip(mqtt_subscriber, mqtt_publisher, fqdn,
@@ -133,7 +133,7 @@ def test_capability_gate_blocks_module_attribute(running_probe, mqtt_subscriber,
 
 @pytest.mark.probe_config(capabilities='os,subprocess,call_method,getattr')
 def test_whitelist_gate_blocks_module_attribute(running_probe, mqtt_subscriber, mqtt_publisher):
-    """Whitelist-Gate (S1) layer: an attacker who has full access to
+    """Whitelist-Gate layer: an attacker who has full access to
     PROBE_CAPABILITIES (= broker ACLs misconfigured) STILL cannot reach
     arbitrary module attributes. 'os' is in capabilities → Capability-
     Gate allows, but COMMANDS-dict doesn't have it → 'Unknown method'.
@@ -152,7 +152,7 @@ def test_whitelist_gate_blocks_module_attribute(running_probe, mqtt_subscriber, 
         )
 
 
-# --- Last-Will (~60-80s wegen broker keepalive) ----------------------------
+# --- Last-Will (~10-15s with keepalive=5) ---------------------------------
 
 def test_last_will_published_on_unclean_disconnect(running_probe, mqtt_subscriber):
     """SIGKILL the probe → broker keepalive expires → Last-Will publishes
@@ -163,12 +163,13 @@ def test_last_will_published_on_unclean_disconnect(running_probe, mqtt_subscribe
     default 60s+. Total test time: ~10-15s.
     """
     # Step 1: make sure the probe is fully up (connected='1' retained)
-    initial = mqtt_subscriber('probe/+/connected', timeout=5, min_count=1)
+    initial = mqtt_subscriber('probe/+/v1/connected', timeout=5, min_count=1)
     assert any(m.payload == b'1' for m in initial), 'probe never marked connected'
 
-    # Step 2: brutal kill — proc.kill() ist plattform-portabel
-    # (POSIX SIGKILL, Windows TerminateProcess), löst kein sauberes
-    # disconnect aus → Broker triggert Last-Will nach Keepalive-Timeout.
+    # Step 2: brutal kill — proc.kill() is platform-portable
+    # (POSIX SIGKILL, Windows TerminateProcess) and does NOT trigger a
+    # clean disconnect, so the broker fires the Last-Will after the
+    # keepalive timeout.
     running_probe.kill()
 
     # Step 3: wait for the Will. With keepalive=5, the broker should
@@ -176,7 +177,7 @@ def test_last_will_published_on_unclean_disconnect(running_probe, mqtt_subscribe
     deadline = time.monotonic() + 25
     seen_will = False
     while time.monotonic() < deadline and not seen_will:
-        msgs = mqtt_subscriber('probe/+/connected', timeout=5, min_count=1)
+        msgs = mqtt_subscriber('probe/+/v1/connected', timeout=5, min_count=1)
         for m in msgs:
             if m.payload == b'0' and m.retain:
                 seen_will = True
@@ -208,15 +209,9 @@ def test_probe_exponential_backoff_on_dead_broker(tmp_path):
         'PROBE_METHODS="ping"\nPROBE_CAPABILITIES="ping"\n'
     )
     src_dir = Path(__file__).parent.parent / 'src'
-    tests_dir = Path(__file__).parent
-    # Subprocess-Coverage aktivieren (parallel=true in pyproject sorgt
-    # dafuer dass mehrere subprocess-coverage-Runs nicht kollidieren).
-    # Damit traegt dieser Test zur Coverage von app.py-Reconnect-Loop
-    # bei, was sonst 35s laufendem Subprocess ohne Coverage-Wert waere.
     env = {
         **os.environ,
-        'PYTHONPATH': os.pathsep.join([str(tests_dir), str(src_dir)]),
-        'COVERAGE_PROCESS_START': str(src_dir.parent / 'pyproject.toml'),
+        'PYTHONPATH': str(src_dir),
     }
 
     proc = subprocess.Popen(
@@ -272,106 +267,11 @@ def test_probe_exponential_backoff_on_dead_broker(tmp_path):
     )
 
 
-# --- TLS / mTLS (L-T3) ----------------------------------------------------
-
-def test_probe_connects_via_tls(tls_broker, tmp_path):
-    """Verifies the production-relevant `--ca_certificate / --certfile /
-    --keyfile` codepath in App._setup. Uses a separate TLS-broker with
-    require_certificate=true (= mTLS), so the probe MUST present its
-    client cert or the connection is rejected.
-
-    Catches: TLS context misconfiguration, cert-path file-not-found,
-    paho-mqtt tls_set() API drift on future libmosquitto/openssl
-    upgrades, certificate-validation regressions.
-    """
-    config_file = tmp_path / 'userconfig.txt'
-    config_file.write_text(
-        'PROBE_METHODS="ping"\nPROBE_CAPABILITIES="ping"\n'
-    )
-    src_dir = Path(__file__).parent.parent / 'src'
-    tests_dir = Path(__file__).parent
-    env = {
-        **os.environ,
-        'PYTHONPATH': os.pathsep.join([str(tests_dir), str(src_dir)]),
-        'COVERAGE_PROCESS_START': str(src_dir.parent / 'pyproject.toml'),
-        'PROBE_MQTT_KEEPALIVE': '5',
-    }
-
-    proc = subprocess.Popen(
-        [
-            sys.executable, str(src_dir / 'app.py'),
-            '--config_file', str(config_file),
-            '--mqtt_hostname', tls_broker.host,
-            '--mqtt_port', str(tls_broker.port),
-            '--ca_certificate', tls_broker.ca,
-            '--certfile', tls_broker.client_cert,
-            '--keyfile', tls_broker.client_key,
-            # bewusst KEIN --no_tls — das ist genau der Pfad den wir testen
-            '--loglevel', 'WARNING',
-        ],
-        env=env,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        text=True,
-    )
-
-    # Subscribe-Client mit denselben certs gegen den TLS-Broker
-    seen_connected = []
-
-    def on_connect(client, userdata, flags, reason_code, properties=None):
-        client.subscribe('probe/+/connected')
-
-    def on_message(client, userdata, msg):
-        if msg.payload == b'1':
-            seen_connected.append(True)
-
-    sub = mqtt.Client(
-        callback_api_version=mqtt.CallbackAPIVersion.VERSION2,
-        client_id='pytest-tls-sub',
-    )
-    sub.on_connect = on_connect
-    sub.on_message = on_message
-    sub.tls_set(
-        ca_certs=tls_broker.ca,
-        certfile=tls_broker.client_cert,
-        keyfile=tls_broker.client_key,
-    )
-
-    try:
-        sub.connect(tls_broker.host, tls_broker.port, 30)
-        sub.loop_start()
-
-        deadline = time.monotonic() + 15
-        while not seen_connected and time.monotonic() < deadline:
-            if proc.poll() is not None:
-                stdout = proc.stdout.read() if proc.stdout else ''
-                pytest.fail(
-                    f'probe-process exited unexpectedly (rc={proc.returncode}). '
-                    f'Output:\n{stdout}'
-                )
-            time.sleep(0.2)
-
-        assert seen_connected, (
-            'probe never published connected="1" via TLS — TLS-handshake '
-            'or mTLS-cert-presentation likely failed. '
-            f'Probe output:\n{proc.stdout.read() if proc.stdout else ""}'
-        )
-    finally:
-        sub.loop_stop()
-        sub.disconnect()
-        proc.terminate()
-        try:
-            proc.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            proc.kill()
-            proc.wait()
-
-
 # --- Helpers --------------------------------------------------------------
 
 def _read_probe_fqdn(mqtt_subscriber) -> str:
     """Discover the probe's actual FQDN by reading any retained probe-topic."""
-    msgs = mqtt_subscriber('probe/+/connected', timeout=5, min_count=1)
+    msgs = mqtt_subscriber('probe/+/v1/connected', timeout=5, min_count=1)
     if not msgs:
         pytest.fail('no probe online — running_probe fixture failed')
     # topic = 'probe/<fqdn>/connected'

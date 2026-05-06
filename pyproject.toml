@@ -1,58 +1,12 @@
-# Project metadata + tool configuration.
+# Tool configuration only.
 #
-# Note: this file is intentionally NOT a build-system file (no
-# [build-system] section). The probe is deployed via plain
-# pip install -r requirements.lock.txt, not as a packaged wheel.
-# pyproject.toml here is purely for:
-#   - Project metadata discovery (e.g. for GitHub linguist, PyPI
-#     scrapers, internal dashboards)
-#   - Tool configuration (currently only pytest; if mypy or ruff
-#     get added later, their [tool.*] tables go here too)
-
-[project]
-name = "humboldt-probe"
-version = "0.2.0"
-description = "MQTT health/control agent for AV/Digital Media installations at Humboldt Forum"
-readme = "README.md"
-requires-python = ">=3.9,<3.14"
-authors = [
-    {name = "Stiftung Humboldtforum"},
-]
-keywords = ["mqtt", "iot", "monitoring", "av", "kiosk"]
-classifiers = [
-    "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.9",
-    "Programming Language :: Python :: 3.10",
-    "Programming Language :: Python :: 3.11",
-    "Programming Language :: Python :: 3.12",
-    "Programming Language :: Python :: 3.13",
-    "Operating System :: POSIX :: Linux",
-    "Operating System :: Microsoft :: Windows",
-    "Topic :: System :: Monitoring",
-    "Topic :: System :: Networking",
-]
-dependencies = [
-    "paho-mqtt>=2.0.0,<3.0.0",
-    "sd-notify==0.1.0; sys_platform == 'linux'",
-    "psutil>=5.9.0,<8.0.0",
-    "click>=8.0.0,<9.0.0",
-    "pycaw>=20240210,<20270101; sys_platform == 'win32'",
-    "comtypes>=1.2.0,<2.0.0; sys_platform == 'win32'",
-    "pythonnet>=3.0.0,<4.0.0; sys_platform == 'win32'",
-]
-
-[project.optional-dependencies]
-dev = [
-    "pytest>=8.0.0,<10.0.0",
-    "pytest-cov>=5.0.0,<7.0.0",
-    "pip-tools>=7.0.0,<8.0.0",  # for re-generating requirements.lock.txt
-    "cryptography>=42.0.0,<46.0.0",  # self-signed certs in TLS-integration test
-]
-
-[project.urls]
-Repository = "https://github.com/stiftung-humboldtforum/mediensteuerung-probe"
-
-# --- Tool configuration ---------------------------------------------------
+# This project is NOT a packaged Python distribution — deployment is
+# `git clone` + `pip install -r requirements.lock.txt`. The previous
+# [project] / [project.optional-dependencies] / [project.urls]
+# sections were half-formal (no [build-system], not on PyPI) and have
+# been removed. Dependencies are pinned in requirements.txt /
+# requirements.lock.txt; Python version compatibility is the operator's
+# responsibility (3.9-3.13 on Linux, 3.13 on Windows — see README).
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -62,26 +16,13 @@ filterwarnings = [
     "error::DeprecationWarning",
 ]
 markers = [
-    "integration: requires a running MQTT broker (PROBE_TEST_BROKER:PROBE_TEST_PORT, default 127.0.0.1:11883). Auto-skipped if no broker is reachable. Run with: mosquitto -p 11883 -v &, then pytest -m integration.",
+    "integration: requires a running MQTT broker (PROBE_TEST_BROKER:PROBE_TEST_PORT, default 127.0.0.1:11883). Auto-skipped if no broker is reachable. Run: mosquitto -p 11883 -v &, then pytest -m integration.",
     "probe_config(methods, capabilities): override the running_probe-fixture's PROBE_METHODS / PROBE_CAPABILITIES for this test.",
 ]
 
 [tool.coverage.run]
 source = ["src"]
 branch = true
-# Subprocess-Coverage: parallel=true erlaubt mehrere coverage-runs in
-# parallelen Prozessen ihre Daten nach .coverage.<pid> zu schreiben,
-# pytest-cov macht am Ende ein 'coverage combine'. Das fängt die
-# Coverage von src/app.py auf, das in Integration-Tests via
-# subprocess.Popen gestartet wird (siehe tests/sitecustomize.py).
-parallel = true
-sigterm = true
-# _win32.py wird seit L-T12 via Mock-Tests in test_methods_win32.py
-# abgedeckt — nicht mehr aus Coverage ausgenommen.
-
-[tool.coverage.paths]
-# fuer 'coverage combine' wenn subprocess-CWD anders ist als pytest-CWD
-source = ["src", "*/src"]
 
 [tool.coverage.report]
 exclude_lines = [

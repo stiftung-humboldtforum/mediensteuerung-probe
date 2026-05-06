@@ -44,23 +44,15 @@ class App:
     or any failure: stop, exponential-backoff, retry.
     """
 
-    # Reconnect-Backoff (siehe N8): bei jedem fehlgeschlagenen
-    # Setup/Connect verdoppelt sich die Wartezeit, deckelt bei MAX.
+    # Reconnect backoff: each failed setup/connect doubles the wait,
+    # capped at BACKOFF_MAX.
     BACKOFF_INITIAL = 5
     BACKOFF_MAX = 60
 
-    # Toleranz fuer initialen Probe-Thread/App-Thread Start-Race im
-    # Watchdog-Heartbeat-Check (siehe Bug B / STALL_TOLERANCE-fix).
-    # Erst nach >STALL_TOLERANCE stalled-cycles wird sd_notify-Watchdog-
-    # Ping zurueckgehalten und Warning geloggt.
-    STALL_TOLERANCE = 2
-
-    # Maximale Wartezeit am Stueck waehrend Reconnect-Backoff bevor wir
-    # einen sd_notify-Watchdog-Ping schicken muessen. Kleiner als der
-    # systemd-WatchdogSec (30s im Reference-Unit) — sonst wuerde
-    # systemd den Service waehrend einer langen Backoff-Sleep-Phase als
-    # gestallt markieren und neustarten, was den Backoff-Counter wegen
-    # frischen Setup-Versuchen sinnlos resetten wuerde.
+    # Maximum chunk of sleep during reconnect-backoff before we ping
+    # sd_notify. Must be < systemd's WatchdogSec (30s in the reference
+    # unit) — otherwise systemd would mark the service stalled and
+    # restart it mid-backoff, defeating the point of exponential backoff.
     BACKOFF_NOTIFY_INTERVAL = 15
 
     def __init__(
@@ -130,7 +122,7 @@ class App:
         # publishes this to inform the manager. retained so newly
         # subscribing managers see the current state.
         self.mqtt_client.will_set(
-            f'probe/{self.fqdn}/connected',
+            f'probe/{self.fqdn}/v1/connected',
             payload='0',
             qos=1,
             retain=True,
@@ -205,17 +197,15 @@ class App:
                 continue
 
             try:
-                self.probe.start()
-
                 if self.notify_enabled:
                     self.notify.status('Connecting...')
 
                 logger.info('Connecting MQTT Host: %s:%s', self.mqtt_hostname, self.mqtt_port)
-                # MQTT keepalive default 60s — Last-Will fires nach
-                # ~1.5x keepalive (= 90s broker default). Tests setzen
-                # PROBE_MQTT_KEEPALIVE=5 fuer schnelleren Last-Will-
-                # Trigger. Garbage env-values fall back to default
-                # statt _setup() in einer Loop wegen ValueError zu killen.
+                # MQTT keepalive default 60s. Last-Will fires after
+                # ~1.5x keepalive (= 90s broker default). Tests set
+                # PROBE_MQTT_KEEPALIVE=5 for a faster Last-Will trigger.
+                # Garbage env-values fall back to the default instead
+                # of killing _setup() in a ValueError loop.
                 keepalive_raw = os.environ.get('PROBE_MQTT_KEEPALIVE', '60')
                 try:
                     keepalive = int(keepalive_raw)
@@ -225,15 +215,14 @@ class App:
                 self.mqtt_client.connect(self.mqtt_hostname, self.mqtt_port, keepalive)
                 self.mqtt_client.loop_start()
 
-                # Warte auf das tatsaechliche on_connect-Callback statt
-                # blindem time.sleep(3). Auf langsamen Brokern wuerde
-                # sleep(3) zu frueh enden und die while-Loop sofort
-                # rauswerfen → Reconnect-Flap.
+                # Wait for the actual on_connect callback rather than a
+                # blind time.sleep(3). On slow brokers a fixed sleep
+                # would end too early and the outer loop would flap.
                 if not self.probe.connected_event.wait(timeout=15):
                     logger.error('MQTT connect handshake timed out after 15s')
                     raise TimeoutError('MQTT connect timeout')
 
-                # Erfolgreicher Handshake → backoff-Counter zuruecksetzen
+                # Successful handshake → reset backoff counter.
                 backoff = self.BACKOFF_INITIAL
 
                 if self.notify_enabled:
@@ -241,30 +230,30 @@ class App:
                     self.notify.status('Connected.')
                     self.notify.notify()
 
-                last_heartbeat = self.probe.heartbeat
-                stalled_cycles = 0
+                # Drive sensor polling from the main thread. paho-mqtt's
+                # network thread handles connect/messages; we just call
+                # probe.poll() every 5s and ping sd_notify so systemd's
+                # watchdog stays satisfied. The is_connected check after
+                # each sleep exits the loop within 5s of any disconnect.
                 while self.probe.is_connected:
+                    try:
+                        self.probe.poll()
+                    except Exception:
+                        # Probe.poll() catches per-sensor errors, so
+                        # reaching here means a structural bug.
+                        logger.exception('Probe.poll crashed')
+                    if self.notify_enabled:
+                        self.notify.notify()
                     time.sleep(5)
-                    current_heartbeat = self.probe.heartbeat
-                    if current_heartbeat != last_heartbeat:
-                        last_heartbeat = current_heartbeat
-                        stalled_cycles = 0
-                        if self.notify_enabled:
-                            self.notify.notify()
-                    else:
-                        stalled_cycles += 1
-                        if stalled_cycles > self.STALL_TOLERANCE:
-                            logger.warning('Probe heartbeat stalled (%d cycles); withholding sd_notify watchdog ping', stalled_cycles)
 
                 logger.debug('Probe is not connected')
             except Exception as e:
                 logger.exception('Connect cycle error: %s', e)
                 if self.notify_enabled:
-                    # Exception-Typ und Kurzbeschreibung statt generischem
-                    # 'Failed.' — der Manager sieht ueber sd_notify den
-                    # Statustext und kann unterschiedliche Failure-Modi
-                    # auseinanderhalten (TimeoutError vs ConnectionRefused
-                    # vs CertificateError).
+                    # Carry exception type + message in the sd_notify
+                    # status so the operator can tell failure modes apart
+                    # (TimeoutError vs ConnectionRefused vs CertificateError)
+                    # straight from `systemctl status`.
                     detail = f'{type(e).__name__}: {e}'[:200]
                     self.notify.status(f'Failed: {detail}')
                     self.notify.notify()
@@ -275,9 +264,9 @@ class App:
             backoff = min(backoff * 2, self.BACKOFF_MAX)
 
     def stop(self) -> None:
-        """Tear down current cycle: disconnect MQTT, stop the network
-        loop thread, signal Probe-Thread to stop, join it. Idempotent —
-        safe to call when attributes don't yet exist (early Setup-failure).
+        """Tear down current cycle: publish offline-state, disconnect
+        MQTT, stop the network loop thread. Idempotent — safe to call
+        when attributes don't yet exist (early Setup-failure).
 
         On a clean (graceful) disconnect the Last-Will does NOT fire, so
         we explicitly publish `connected="0"` retained before disconnecting
@@ -290,7 +279,7 @@ class App:
                 # immediately rather than waiting for the next probe-up.
                 try:
                     self.mqtt_client.publish(
-                        f'probe/{self.fqdn}/connected',
+                        f'probe/{self.fqdn}/v1/connected',
                         payload='0', qos=1, retain=True,
                     ).wait_for_publish(timeout=2)
                 except Exception as e:
@@ -302,9 +291,6 @@ class App:
             # loop_stop() must be called for every loop_start() — without
             # it the paho-mqtt network thread leaks per reconnect cycle.
             self.mqtt_client.loop_stop()
-        if hasattr(self, 'probe') and self.probe.is_alive():
-            self.probe.stop()
-            self.probe.join()
 
 
 @click.command()
@@ -363,8 +349,8 @@ def main(
 
     if notify is not None and notify.enabled():
         if no_tls:
-            # Operator-sichtbarer Status: kein TLS aktiv. systemctl
-            # status zeigt das prominent neben dem laeufenden-marker.
+            # Operator-visible status: TLS off. `systemctl status` shows
+            # this prominently next to the active-state marker.
             notify.status('UNSAFE: --no_tls active (no encryption, no auth)')
         else:
             notify.status('Startup...')

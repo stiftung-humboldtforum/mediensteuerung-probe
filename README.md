@@ -24,7 +24,6 @@ src/
     __init__.py                Plattform-Dispatch + SENSORS/COMMANDS-Whitelists
     _linux.py                  Linux (wpctl, xrandr, psutil)
     _win32.py                  Windows (pycaw, LibreHardwareMonitor, Win32 API)
-    _stub.py                   Fallback (macOS-Dev)
   misc/
     __init__.py                Config-Parser, JSON-Envelope, Validation
 
@@ -265,8 +264,8 @@ Dashboard kann Fleet-Drift erkennen.
 
 ## Testing
 
-Mosquitto fuer Integration-Tests installieren (`brew install mosquitto`
-/ `apt install mosquitto` / `winget install EclipseFoundation.Mosquitto`),
+Mosquitto fuer Integration-Tests installieren (`apt install mosquitto`
+auf Linux / `winget install EclipseFoundation.Mosquitto` auf Windows),
 dann:
 
 ```bash

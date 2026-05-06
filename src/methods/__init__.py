@@ -1,18 +1,18 @@
 """methods package — sensor and command dispatch.
 
 Platform-specific implementations live in _linux.py / _win32.py.
-_stub.py provides graceful fallbacks for unsupported platforms (e.g.
-macOS dev machines running tests).
+Other platforms are not supported — import fails loudly so a
+mis-deployed probe is caught at startup, not silently in production.
 
-Common implementations (ping, boot_time, mpv_file_pos_sec, easire)
-that don't differ across platforms live in this module.
+Site-specific sensors (easire, mpv_file_pos_sec) live in _plugins.py
+and register themselves at import time via the `register_sensor`
+decorator. Core does not know about them.
 
 SENSORS — names allowed in PROBE_METHODS (periodic polling).
 COMMANDS — names allowed in PROBE_CAPABILITIES (manager → probe RPC).
 """
 import platform
-import subprocess
-from typing import Callable, Optional
+from typing import Callable
 
 import psutil
 
@@ -25,7 +25,31 @@ if _system == 'Linux':
 elif _system == 'Windows':
     from . import _win32 as _impl
 else:
-    from . import _stub as _impl
+    raise RuntimeError(
+        f'Unsupported platform: {_system!r}. Probe runs on Linux + Windows only.'
+    )
+
+
+# --- Whitelists + registration --------------------------------------------
+
+SENSORS: dict[str, Callable] = {}
+COMMANDS: dict[str, Callable] = {}
+
+
+def register_sensor(name: str):
+    """Decorator: add a function to SENSORS under the given name."""
+    def deco(fn: Callable) -> Callable:
+        SENSORS[name] = fn
+        return fn
+    return deco
+
+
+def register_command(name: str):
+    """Decorator: add a function to COMMANDS under the given name."""
+    def deco(fn: Callable) -> Callable:
+        COMMANDS[name] = fn
+        return fn
+    return deco
 
 
 # --- Common helpers --------------------------------------------------------
@@ -83,12 +107,15 @@ def call_method(method: Callable, *args, **kwargs) -> str:
 
 # --- Common sensors --------------------------------------------------------
 
+@register_sensor('ping')
+@register_command('ping')
 def ping() -> None:
-    """No-op heartbeat marker. Published periodically so the manager
-    sees the probe is alive; carries no data."""
+    """No-op heartbeat marker. Acts as both a periodic sensor and a
+    manager-invokable command."""
     return None
 
 
+@register_command('wake')
 def wake() -> str:
     """No-op acknowledgement of a 'wake' command. Wake-on-LAN is
     triggered externally by the manager (the target machine is asleep
@@ -99,57 +126,13 @@ def wake() -> str:
     return 'awake'
 
 
+@register_sensor('boot_time')
 def boot_time() -> float:
     """Unix-epoch seconds at which the system booted."""
     return psutil.boot_time()
 
 
-def mpv_file_pos_sec() -> Optional[int]:
-    """Current playback position of the kiosk mpv player in seconds.
-    Requires the external 'mpv_control' helper script on PATH (see
-    README). Returns None if mpv_control fails (mpv not running) or
-    if its output is not a parseable number (e.g. 'nan'/'inf' from a
-    paused/seeking mpv)."""
-    p = subprocess.run(
-        ['mpv_control', 'file_pos_sec'],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        timeout=3,
-    )
-    if p.returncode != 0:
-        return None
-    raw = p.stdout.strip().decode()
-    if not raw:
-        return None
-    try:
-        # Accept either '12' or '12.345' from third-party mpv_control
-        # impls; nan/inf yield ValueError via int() and short-circuit
-        # to None instead of crashing the sensor cycle.
-        value = float(raw)
-    except ValueError:
-        return None
-    if value != value or value in (float('inf'), float('-inf')):
-        return None
-    return int(value)
-
-
-def easire() -> Optional[bool]:
-    """Whether an 'easire-player' process is running (matched on
-    process name OR any cmdline argument). Returns True or None
-    (not False — None signals 'not present', preserving Original-
-    avorus-probe semantics for the manager-side)."""
-    for proc in psutil.process_iter(['name', 'cmdline']):
-        try:
-            if 'easire-player' in (proc.info['name'] or ''):
-                return True
-            if any('easire-player' in arg for arg in (proc.info['cmdline'] or [])):
-                return True
-        except (psutil.NoSuchProcess, psutil.AccessDenied):
-            pass
-    return None
-
-
-# --- Platform-specific re-exports -----------------------------------------
+# --- Platform-specific re-exports + registration --------------------------
 
 shutdown = _impl.shutdown
 reboot = _impl.reboot
@@ -161,26 +144,29 @@ fans = _impl.fans
 uptime = _impl.uptime
 display = _impl.display
 
+for _name, _fn in (
+    ('temperatures', temperatures),
+    ('fans', fans),
+    ('uptime', uptime),
+    ('display', display),
+    ('is_muted', is_muted),
+):
+    SENSORS[_name] = _fn
 
-# --- Whitelists -----------------------------------------------------------
+for _name, _fn in (
+    ('shutdown', shutdown),
+    ('reboot', reboot),
+    ('mute', mute),
+    ('unmute', unmute),
+):
+    COMMANDS[_name] = _fn
 
-SENSORS = {
-    'ping': ping,
-    'temperatures': temperatures,
-    'fans': fans,
-    'uptime': uptime,
-    'boot_time': boot_time,
-    'mpv_file_pos_sec': mpv_file_pos_sec,
-    'display': display,
-    'easire': easire,
-    'is_muted': is_muted,
-}
 
-COMMANDS = {
-    'shutdown': shutdown,
-    'reboot': reboot,
-    'mute': mute,
-    'unmute': unmute,
-    'ping': ping,
-    'wake': wake,
-}
+# --- Site-specific plugins -------------------------------------------------
+# Imported last so register_sensor/register_command are already defined.
+# Operators replacing this file (or wiping its contents) get a probe
+# without easire/mpv_file_pos_sec — generic core stays usable.
+from . import _plugins  # noqa: E402, F401
+# Re-export plugin functions at the package level so existing call sites
+# (`from methods import easire`) keep working.
+from ._plugins import easire, mpv_file_pos_sec  # noqa: E402, F401

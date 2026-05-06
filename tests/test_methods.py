@@ -5,7 +5,7 @@ from collections import namedtuple
 
 import pytest
 
-from methods import call_method, ping, wake, boot_time, easire, mpv_file_pos_sec
+from methods import call_method, wake, easire, mpv_file_pos_sec
 
 
 def test_call_method_success():
@@ -39,24 +39,12 @@ def test_call_method_exception():
     assert 'test error' in result['error']['errors']
 
 
-def test_ping_returns_none():
-    assert ping() is None
-
-
 def test_wake_returns_awake():
     """wake() is a no-op acknowledgement — manager triggers WoL externally,
     but if the topic IS published (e.g. as confirm-roundtrip after the host
     woke up), probe must answer with a stable string instead of falling
     through to 'Unknown method'."""
     assert wake() == 'awake'
-
-
-def test_call_method_wake_roundtrip_envelope():
-    """End-to-end through call_method — wake's 'awake' must show up as
-    the result in the response envelope."""
-    result = json.loads(call_method(wake))
-    assert result['data']['status'] == 'complete'
-    assert result['data']['result'] == 'awake'
 
 
 def test_call_method_with_unserializable_exception_args():
@@ -97,7 +85,7 @@ def test_call_method_with_broken_repr_does_not_crash():
 def test_mpv_file_pos_sec_accepts_float_output():
     """Some mpv_control reference impls round in shell, others print
     raw 'time-pos' as float — probe must tolerate both."""
-    with patch('methods.subprocess.run') as mock_run:
+    with patch('methods._plugins.subprocess.run') as mock_run:
         mock_run.return_value.returncode = 0
         mock_run.return_value.stdout = b'12.345\n'
         assert mpv_file_pos_sec() == 12
@@ -105,7 +93,7 @@ def test_mpv_file_pos_sec_accepts_float_output():
 
 def test_mpv_file_pos_sec_handles_nan():
     """mpv reports 'nan' on paused/seeking — must not crash."""
-    with patch('methods.subprocess.run') as mock_run:
+    with patch('methods._plugins.subprocess.run') as mock_run:
         mock_run.return_value.returncode = 0
         mock_run.return_value.stdout = b'nan\n'
         assert mpv_file_pos_sec() is None
@@ -113,14 +101,12 @@ def test_mpv_file_pos_sec_handles_nan():
 
 def test_mpv_file_pos_sec_handles_garbage():
     """Non-parseable output → None instead of ValueError crash."""
-    with patch('methods.subprocess.run') as mock_run:
+    with patch('methods._plugins.subprocess.run') as mock_run:
         mock_run.return_value.returncode = 0
         mock_run.return_value.stdout = b'NOT_A_NUMBER\n'
         assert mpv_file_pos_sec() is None
 
 
-def test_boot_time_returns_float():
-    assert isinstance(boot_time(), float)
 
 
 # --- Linux platform tests --------------------------------------------------
@@ -264,7 +250,7 @@ def test_display_linux_xrandr_fails_returns_none(mock_run):
     assert display() is None
 
 
-# --- Subprocess-Timeout coverage (R1) -------------------------------------
+# --- Subprocess-Timeout coverage -------------------------------------
 
 @patch('methods._linux.subprocess.check_output')
 def test_is_muted_linux_timeout_propagates(mock_output):
@@ -284,7 +270,7 @@ def test_display_linux_timeout_returns_none_via_caller(mock_run):
         display()
 
 
-@patch('methods.subprocess.run')
+@patch('methods._plugins.subprocess.run')
 def test_mpv_file_pos_sec_timeout_propagates(mock_run):
     mock_run.side_effect = subprocess.TimeoutExpired(['mpv_control'], 3)
     with pytest.raises(subprocess.TimeoutExpired):

@@ -51,7 +51,7 @@ ExecStart=/usr/bin/python3 src/app.py \
 
 # Restart-Strategie: bei Failure neu starten, mit Burst-Limit gegen
 # tight loops (z.B. broker dauerhaft tot oder cert-Pfad falsch).
-# sd_notify-Watchdog feuert nach 30s ohne Heartbeat (siehe B6) und
+# sd_notify-Watchdog feuert nach 30s ohne Heartbeat und
 # triggert ebenfalls einen Restart.
 Restart=on-failure
 RestartSec=5

@@ -135,10 +135,10 @@ def _get_lhm_computer():
 
 
 def _get_lhm_sensors(sensor_type):
-    """Aggregate Temperature- or Fan-Sensoren von der LHM-Hardware-
-    Liste. Filtert auf CPU/GPU-Hardware (sonst kommen Mainboard- und
-    SSD-Sensoren mit, die der Manager nicht braucht). Schema matcht
-    Linux psutil: {hw_name: [{label, current}, ...]}."""
+    """Aggregate Temperature or Fan sensors from the LHM hardware
+    list. Filters to CPU/GPU hardware so motherboard and SSD sensors
+    don't sneak in (the manager doesn't need them). Schema matches
+    the Linux psutil one: {hw_name: [{label, current}, ...]}."""
     c = _get_lhm_computer()
     from LibreHardwareMonitor.Hardware import SensorType
     target = {'Temperature': SensorType.Temperature, 'Fan': SensorType.Fan}[sensor_type]

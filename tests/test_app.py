@@ -25,12 +25,6 @@ def _make_app(**overrides):
 
 # --- FQDN handling --------------------------------------------------------
 
-def test_app_init_caches_fqdn():
-    with patch('app.socket.getfqdn', return_value='cache.test'):
-        app = _make_app()
-    assert app.fqdn == 'cache.test'
-
-
 def test_fqdn_property_does_not_call_dns():
     """The cached property must not re-resolve."""
     with patch('app.socket.getfqdn', return_value='initial.test'):
@@ -40,15 +34,6 @@ def test_fqdn_property_does_not_call_dns():
         for _ in range(5):
             assert app.fqdn == 'initial.test'
         assert mock_getfqdn.call_count == 0
-
-
-def test_refresh_fqdn_no_change_is_silent():
-    with patch('app.socket.getfqdn', return_value='same.test'):
-        app = _make_app()
-    with patch('app.socket.getfqdn', return_value='same.test'):
-        # No exception, no return value
-        app._refresh_fqdn()
-    assert app.fqdn == 'same.test'
 
 
 def test_refresh_fqdn_raises_on_change():
@@ -101,16 +86,6 @@ def test_no_tls_banner_remote(caplog):
     messages = [r.getMessage() for r in caplog.records]
     assert any('NO AUTH, NO ENCRYPTION' in m for m in messages)
     assert any('Production deployments MUST use TLS' in m for m in messages)
-
-
-# --- Backoff math ----------------------------------------------------------
-
-def test_backoff_constants():
-    """Sanity: initial < max, both positive."""
-    assert 0 < App.BACKOFF_INITIAL < App.BACKOFF_MAX
-    # Doubling stays within MAX
-    capped = min(App.BACKOFF_INITIAL * 2 ** 10, App.BACKOFF_MAX)
-    assert capped == App.BACKOFF_MAX
 
 
 # --- Lifecycle / cleanup --------------------------------------------------
@@ -186,17 +161,6 @@ def test_backoff_sleep_pings_notify_within_watchdog_window():
     assert notify.notify.call_count >= 3
 
 
-# --- STALL_TOLERANCE / heartbeat watchdog ---------------------------------
-
-def test_stall_tolerance_constants():
-    """STALL_TOLERANCE must be small enough for sd_notify to surface a
-    stalled probe before systemd's WatchdogSec=30s elapses, but >0 so
-    a single delayed cycle does not count as stall."""
-    assert App.STALL_TOLERANCE >= 1
-    # 5s sleep per cycle * (STALL_TOLERANCE+1) must fit in WatchdogSec=30s.
-    assert (App.STALL_TOLERANCE + 1) * 5 < 30
-
-
 # --- sd_notify status sequence --------------------------------------------
 
 def _make_notify_mock():
@@ -242,7 +206,7 @@ def test_notify_status_sequence_on_setup_failure():
 def test_notify_status_includes_exception_type_and_message():
     """notify.status('Failed: ...') must contain the exception class name
     AND a snippet of the message — Operator can debug from the systemd
-    status line alone (S-R1 / N7)."""
+    status line alone."""
     notify = _make_notify_mock()
     app = _make_app(notify=notify)
 

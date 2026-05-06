@@ -32,9 +32,9 @@ def get_config(config_file: str) -> dict[str, str]:
         logger.error('Cannot read config %s: %s', config_file, e)
         return config
 
-    # Strip comment lines BEFORE shlex.split, sonst zerlegt shlex
-    # '# Periodische Sensor-Polls' in 6 nutzlose Tokens die als
-    # garbage-Keys im Config-Dict landen.
+    # Strip comment lines BEFORE shlex.split — otherwise shlex would
+    # tokenise '# Periodische Sensor-Polls' into 6 useless tokens that
+    # end up as garbage keys in the config dict.
     cleaned = '\n'.join(
         line for line in content.splitlines()
         if line.strip() and not line.lstrip().startswith('#')
