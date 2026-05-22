@@ -2,7 +2,7 @@
 #    uv pip compile --universal --strip-extras --output-file requirements.lock.txt requirements.txt
 cffi==2.0.0 ; sys_platform == 'win32'
     # via clr-loader
-click==8.3.3
+click==8.4.1
     # via -r requirements.txt
 clr-loader==0.2.10 ; sys_platform == 'win32'
     # via pythonnet
