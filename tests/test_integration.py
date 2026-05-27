@@ -8,7 +8,6 @@ level bugs that mock-based unit tests cannot:
   - retained-message semantics
   - QoS 1 acknowledgements
   - topic subscription patterns (noLocal, wildcards)
-  - Last-Will publishing on unclean disconnect
   - command-response roundtrip via real broker
   - exponential backoff on broker outage
 
@@ -38,7 +37,7 @@ pytestmark = pytest.mark.integration
 
 def test_probe_publishes_connected_retained(running_probe, mqtt_subscriber):
     """A late subscriber must immediately see connected='1' (retained)."""
-    msgs = mqtt_subscriber('probe/+/v1/connected', timeout=5, min_count=1)
+    msgs = mqtt_subscriber('probe/+/connected', timeout=5, min_count=1)
     matching = [m for m in msgs if m.payload == b'1']
     assert matching, f'no connected=1 retained message; got: {[m.payload for m in msgs]}'
     # Retained-Flag muss True sein
@@ -46,7 +45,7 @@ def test_probe_publishes_connected_retained(running_probe, mqtt_subscriber):
 
 
 def test_probe_publishes_capabilities_retained(running_probe, mqtt_subscriber):
-    msgs = mqtt_subscriber('probe/+/v1/capabilities', timeout=5, min_count=1)
+    msgs = mqtt_subscriber('probe/+/capabilities', timeout=5, min_count=1)
     assert msgs, 'no capabilities message'
     payload = msgs[-1].payload.decode()
     # Aus running_probe-Fixture-Config:
@@ -56,7 +55,7 @@ def test_probe_publishes_capabilities_retained(running_probe, mqtt_subscriber):
 
 
 def test_probe_publishes_boot_time_retained(running_probe, mqtt_subscriber):
-    msgs = mqtt_subscriber('probe/+/v1/boot_time', timeout=5, min_count=1)
+    msgs = mqtt_subscriber('probe/+/boot_time', timeout=5, min_count=1)
     assert msgs, 'no boot_time message'
     parsed = json.loads(msgs[-1].payload)
     assert parsed['data']['status'] == 'complete'
@@ -70,7 +69,7 @@ def test_probe_publishes_boot_time_retained(running_probe, mqtt_subscriber):
 def test_probe_periodic_cycle_publishes_sensors(running_probe, mqtt_subscriber):
     """Probe.run() runs one cycle every 5s. Within ~8s we must see at
     least one ping, one uptime, and one errors topic."""
-    msgs = mqtt_subscriber('probe/+/v1/+', timeout=8)
+    msgs = mqtt_subscriber('probe/+/+', timeout=8)
     topics = {m.topic.split('/')[-1] for m in msgs}
     assert 'ping' in topics
     assert 'uptime' in topics
@@ -94,7 +93,7 @@ def _command_roundtrip(mqtt_subscriber, mqtt_publisher, fqdn, command,
     t = threading.Thread(target=collect)
     t.start()
     time.sleep(0.3)  # subscriber needs to be wired up
-    mqtt_publisher(f'manager/{fqdn}/v1/{command}', '')
+    mqtt_publisher(f'manager/{fqdn}/{command}', '')
     t.join(timeout=timeout + 2)
     return [json.loads(m.payload) for m in captured]
 
@@ -152,38 +151,11 @@ def test_whitelist_gate_blocks_module_attribute(running_probe, mqtt_subscriber, 
         )
 
 
-# --- Last-Will (~10-15s with keepalive=5) ---------------------------------
-
-def test_last_will_published_on_unclean_disconnect(running_probe, mqtt_subscriber):
-    """SIGKILL the probe → broker keepalive expires → Last-Will publishes
-    connected='0'.
-
-    Uses PROBE_MQTT_KEEPALIVE=5 (set by running_probe-fixture) so the
-    broker detects the dead session after ~7-8s instead of paho-mqtt's
-    default 60s+. Total test time: ~10-15s.
-    """
-    # Step 1: make sure the probe is fully up (connected='1' retained)
-    initial = mqtt_subscriber('probe/+/v1/connected', timeout=5, min_count=1)
-    assert any(m.payload == b'1' for m in initial), 'probe never marked connected'
-
-    # Step 2: brutal kill — proc.kill() is platform-portable
-    # (POSIX SIGKILL, Windows TerminateProcess) and does NOT trigger a
-    # clean disconnect, so the broker fires the Last-Will after the
-    # keepalive timeout.
-    running_probe.kill()
-
-    # Step 3: wait for the Will. With keepalive=5, the broker should
-    # publish connected='0' within ~10-15s.
-    deadline = time.monotonic() + 25
-    seen_will = False
-    while time.monotonic() < deadline and not seen_will:
-        msgs = mqtt_subscriber('probe/+/v1/connected', timeout=5, min_count=1)
-        for m in msgs:
-            if m.payload == b'0' and m.retain:
-                seen_will = True
-                break
-
-    assert seen_will, 'Last-Will connected="0" never arrived'
+# Note: No Last-Will test — the Probe deliberately does NOT set an LWT,
+# because the Manager's `on_connected` handler ignores the payload and
+# would mark the device ONLINE on any arrival of `probe/<fqdn>/connected`
+# (even with payload '0'). The Manager detects unclean disconnects via
+# ping-timeout (`ping_max_interval`, default 30s).
 
 
 # --- Reconnect / Backoff (no broker = no auto-skip relevant) --------------
@@ -271,7 +243,7 @@ def test_probe_exponential_backoff_on_dead_broker(tmp_path):
 
 def _read_probe_fqdn(mqtt_subscriber) -> str:
     """Discover the probe's actual FQDN by reading any retained probe-topic."""
-    msgs = mqtt_subscriber('probe/+/v1/connected', timeout=5, min_count=1)
+    msgs = mqtt_subscriber('probe/+/connected', timeout=5, min_count=1)
     if not msgs:
         pytest.fail('no probe online — running_probe fixture failed')
     # topic = 'probe/<fqdn>/connected'

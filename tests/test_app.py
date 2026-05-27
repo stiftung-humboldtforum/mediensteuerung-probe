@@ -109,21 +109,19 @@ def test_app_stop_calls_loop_stop_after_loop_start():
     fake_client.loop_stop.assert_called_once()
 
 
-def test_app_stop_publishes_offline_retained_before_disconnect():
-    """Graceful stop must mirror the Last-Will payload (connected='0',
-    retained) so dashboards see 'offline' immediately rather than
-    showing the previous 'connected=1' until the next probe restart."""
+def test_app_stop_does_not_publish_offline():
+    """Graceful stop must NOT publish `connected` — Manager's `on_connected`
+    handler ignores the payload and would mark the device ONLINE on any
+    arrival of the topic. Manager detects unclean disconnects via
+    ping-timeout (ping_max_interval ~30s) instead."""
     app = _make_app()
     fake_client = MagicMock()
     fake_client.is_connected.return_value = True
     app.mqtt_client = fake_client
     app.stop()
-    # publish() called with retained connected='0'
     pub_calls = [c for c in fake_client.publish.call_args_list
                  if c.args and c.args[0].endswith('/connected')]
-    assert len(pub_calls) == 1
-    assert pub_calls[0].kwargs.get('payload') == '0'
-    assert pub_calls[0].kwargs.get('retain') is True
+    assert pub_calls == []
 
 
 def test_app_stop_loop_stop_called_even_if_not_connected():

@@ -40,20 +40,15 @@ def test_probe_unknown_capabilities_logged(caplog):
     assert any('unknown commands' in m and 'reeboot' in m for m in messages)
 
 
-def test_probe_version_published_on_connect():
-    """on_connect must publish probe/<fqdn>/version retained — manager
-    fleet-dashboard relies on it for version-drift detection."""
-    from misc import VERSION
+def test_probe_version_not_published_on_connect():
+    """No probe/<fqdn>/version publish — Manager has no `_state['version']`
+    key, so the topic would only trigger Manager-side exception logs.
+    Version info stays internal (misc.VERSION) for log output."""
     probe = _make_probe()
     probe.on_connect(probe.client, None, flags=Mock(), reason_code=0)
     publish_calls = probe.client.publish.call_args_list
     version_topic_calls = [c for c in publish_calls if c.args[0].endswith('/version')]
-    assert len(version_topic_calls) == 1
-    call = version_topic_calls[0]
-    # Publish keyword args: payload, qos, retain
-    assert call.kwargs.get('payload') == VERSION
-    assert call.kwargs.get('retain') is True
-    assert call.kwargs.get('qos') == 1
+    assert version_topic_calls == []
 
 
 def test_on_disconnect_sets_flag():
@@ -78,7 +73,7 @@ def test_check_display_ok(mock_display):
     probe.check_display()
     assert probe.errors['display'] == 'ok'
     topic, payload = probe.client.publish.call_args[0]
-    assert topic == 'probe/test.local/v1/display'
+    assert topic == 'probe/test.local/display'
     assert json.loads(payload)['data']['result'] == '1920x1080, 60 Hz'
 
 
@@ -166,7 +161,7 @@ def test_on_message_blocked():
     probe = _make_probe(capabilities='mute,unmute')
     client = Mock()
     msg = Mock()
-    msg.topic = 'manager/test.local/v1/shutdown'
+    msg.topic = 'manager/test.local/shutdown'
     msg.payload = b''
 
     probe.on_message(client, None, msg)
@@ -181,7 +176,7 @@ def test_on_message_allowed():
     probe = _make_probe(capabilities='mute,unmute')
     client = Mock()
     msg = Mock()
-    msg.topic = 'manager/test.local/v1/mute'
+    msg.topic = 'manager/test.local/mute'
     msg.payload = b''
 
     with patch('methods.mute') as mock_mute:
@@ -198,7 +193,7 @@ def test_on_message_with_payload():
     probe = _make_probe(capabilities='mute,unmute')
     client = Mock()
     msg = Mock()
-    msg.topic = 'manager/test.local/v1/mute'
+    msg.topic = 'manager/test.local/mute'
     msg.payload = json.dumps({'args': [1], 'kwargs': {'test': True}}).encode()
 
     with patch('methods.mute') as mock_mute:
@@ -210,7 +205,7 @@ def test_on_message_unknown_method():
     probe = _make_probe(capabilities='nonexistent')
     client = Mock()
     msg = Mock()
-    msg.topic = 'manager/test.local/v1/nonexistent'
+    msg.topic = 'manager/test.local/nonexistent'
     msg.payload = b''
 
     probe.on_message(client, None, msg)
@@ -248,7 +243,7 @@ def test_on_message_module_attribute_blocked():
     for forbidden in ('os', 'subprocess', 'call_method'):
         client.reset_mock()
         msg = Mock()
-        msg.topic = f'manager/test.local/v1/{forbidden}'
+        msg.topic = f'manager/test.local/{forbidden}'
         msg.payload = b''
         probe.on_message(client, None, msg)
         published = client.publish.call_args_list
@@ -264,7 +259,7 @@ def test_missing_capabilities_fail_closed():
     assert probe._allowed_methods == {''}
 
     msg = Mock()
-    msg.topic = 'manager/test.local/v1/shutdown'
+    msg.topic = 'manager/test.local/shutdown'
     msg.payload = b''
     probe.on_message(client, None, msg)
     published = client.publish.call_args_list

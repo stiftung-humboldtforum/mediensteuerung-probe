@@ -118,15 +118,11 @@ class App:
         self.mqtt_client.max_inflight_messages_set(20)
         self.mqtt_client.max_queued_messages_set(200)
 
-        # Last Will: when the probe drops unexpectedly the broker
-        # publishes this to inform the manager. retained so newly
-        # subscribing managers see the current state.
-        self.mqtt_client.will_set(
-            f'probe/{self.fqdn}/v1/connected',
-            payload='0',
-            qos=1,
-            retain=True,
-        )
+        # No Last-Will: Manager's on_connected handler ignores the
+        # payload and would mark the device ONLINE on any arrival of
+        # `probe/<fqdn>/connected`, including a retained '0' from an
+        # LWT. The Manager detects unclean disconnects via ping-timeout
+        # (ping_max_interval, default 30s) instead.
 
         if not self.no_tls:
             logger.debug('MQTT TLS material: ca=%s cert=%s key=%s', self.ca_certificate, self.certfile, self.keyfile)
@@ -264,29 +260,16 @@ class App:
             backoff = min(backoff * 2, self.BACKOFF_MAX)
 
     def stop(self) -> None:
-        """Tear down current cycle: publish offline-state, disconnect
-        MQTT, stop the network loop thread. Idempotent — safe to call
-        when attributes don't yet exist (early Setup-failure).
+        """Tear down current cycle: disconnect MQTT, stop the network
+        loop thread. Idempotent — safe to call when attributes don't yet
+        exist (early Setup-failure).
 
-        On a clean (graceful) disconnect the Last-Will does NOT fire, so
-        we explicitly publish `connected="0"` retained before disconnecting
-        — otherwise the manager would keep seeing the previous retained
-        `connected="1"` until a new probe takes over the topic.
+        No offline-publish here: Manager's `on_connected` handler ignores
+        the payload, so any arrival of `probe/<fqdn>/connected` (even
+        with payload '0') would falsely mark the device ONLINE.
         """
         if hasattr(self, 'mqtt_client'):
             if self.mqtt_client.is_connected():
-                # Mirror the Last-Will payload so dashboards see "offline"
-                # immediately rather than waiting for the next probe-up.
-                try:
-                    self.mqtt_client.publish(
-                        f'probe/{self.fqdn}/v1/connected',
-                        payload='0', qos=1, retain=True,
-                    ).wait_for_publish(timeout=2)
-                except Exception as e:
-                    # Publish/wait can fail if the broker is mid-disconnect;
-                    # log at debug — Last-Will will still flip the topic on
-                    # the next unclean-disconnect cycle.
-                    logger.debug('Graceful offline-publish failed: %s', e)
                 self.mqtt_client.disconnect()
             # loop_stop() must be called for every loop_start() — without
             # it the paho-mqtt network thread leaks per reconnect cycle.

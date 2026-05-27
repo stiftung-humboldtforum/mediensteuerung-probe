@@ -179,8 +179,8 @@ def running_probe(request, tmp_path):
     env = {
         **os.environ,
         'PYTHONPATH': str(SRC_DIR),
-        # Short MQTT keepalive so the Last-Will test does not have to
-        # wait the broker default (~90s) for the session to expire.
+        # Short MQTT keepalive so integration tests detect dead sessions
+        # quickly rather than waiting the broker default (~90s).
         'PROBE_MQTT_KEEPALIVE': os.environ.get('PROBE_MQTT_KEEPALIVE', '5'),
     }
 

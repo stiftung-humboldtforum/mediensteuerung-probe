@@ -79,7 +79,7 @@ class Probe:
             logger.exception('mpv_file_pos_sec')
             self.errors['playback'] = 'error'
             self.client.publish(
-                f'probe/{self.fqdn}/v1/mpv_file_pos_sec',
+                f'probe/{self.fqdn}/mpv_file_pos_sec',
                 make_response(error=dict(message='check failed')),
             )
             return
@@ -89,7 +89,7 @@ class Probe:
             self.errors['playback'] = 'ok'
         self.playback_pos = new_playback_pos
         self.client.publish(
-            f'probe/{self.fqdn}/v1/mpv_file_pos_sec',
+            f'probe/{self.fqdn}/mpv_file_pos_sec',
             make_response(data=dict(status='complete', result=new_playback_pos)),
         )
 
@@ -102,7 +102,7 @@ class Probe:
             logger.exception('display')
             self.errors['display'] = 'error'
             self.client.publish(
-                f'probe/{self.fqdn}/v1/display',
+                f'probe/{self.fqdn}/display',
                 make_response(error=dict(message='check failed')),
             )
             return
@@ -111,30 +111,26 @@ class Probe:
         else:
             self.errors['display'] = 'error'
         self.client.publish(
-            f'probe/{self.fqdn}/v1/display',
+            f'probe/{self.fqdn}/display',
             make_response(data=dict(status='complete', result=result)),
         )
 
     def check_easire(self) -> None:
-        """Probe whether the easire-player process is alive."""
+        """Probe whether the easire-player process is alive. Result is
+        recorded in self.errors only — Manager has no `_state['easire']`
+        key, so publishing the topic would just trigger Manager-side
+        exception logs.
+        """
         try:
             result = methods.easire()
         except Exception:
             logger.exception('easire')
             self.errors['easire'] = 'error'
-            self.client.publish(
-                f'probe/{self.fqdn}/v1/easire',
-                make_response(error=dict(message='check failed')),
-            )
             return
         if result is not None:
             self.errors['easire'] = 'ok'
         else:
             self.errors['easire'] = 'error'
-        self.client.publish(
-            f'probe/{self.fqdn}/v1/easire',
-            make_response(data=dict(status='complete', result=result)),
-        )
 
     def poll(self) -> None:
         """Run one polling cycle: invoke every sensor in self.methods
@@ -157,10 +153,10 @@ class Probe:
                     # on `methods.<name>` are honoured even from the
                     # polling loop. stored_method is the fallback.
                     method = getattr(methods, name, stored_method)
-                    self.client.publish(f'probe/{self.fqdn}/v1/{name}', call_method(method))
+                    self.client.publish(f'probe/{self.fqdn}/{name}', call_method(method))
             except Exception:
                 logger.exception(name)
-        self.client.publish(f'probe/{self.fqdn}/v1/errors', status_response(self.errors))
+        self.client.publish(f'probe/{self.fqdn}/errors', status_response(self.errors))
 
     def on_connect(self, client: Client, userdata, flags, reason_code, properties=None):
         """paho-mqtt v2 on_connect callback. Publishes initial state
@@ -169,16 +165,15 @@ class Probe:
         logger.info('Connected reason_code=%s flags=%s', reason_code, flags)
         # retain=True so newly subscribing managers see "alive" without
         # waiting for the next sensor cycle.
-        self.client.publish(f'probe/{self.fqdn}/v1/connected', payload='1', qos=1, retain=True)
-        self.client.publish(f'probe/{self.fqdn}/v1/capabilities', self.capabilities, qos=1, retain=True)
-        self.client.publish(f'probe/{self.fqdn}/v1/version', payload=VERSION, qos=1, retain=True)
-        self.client.publish(f'probe/{self.fqdn}/v1/boot_time', call_method(methods.boot_time), qos=1, retain=True)
+        self.client.publish(f'probe/{self.fqdn}/connected', payload='1', qos=1, retain=True)
+        self.client.publish(f'probe/{self.fqdn}/capabilities', self.capabilities, qos=1, retain=True)
+        self.client.publish(f'probe/{self.fqdn}/boot_time', call_method(methods.boot_time), qos=1, retain=True)
         # `+` matches exactly one topic level — manager commands are of
-        # the form 'manager/<fqdn>/v1/<command>'. Tighter than '#' (which
+        # the form 'manager/<fqdn>/<command>'. Tighter than '#' (which
         # matches any depth) — saves broker routing work and prevents
         # accidental wildcard matches.
         self.client.subscribe(
-            f'manager/{self.fqdn}/v1/+',
+            f'manager/{self.fqdn}/+',
             options=SubscribeOptions(noLocal=True)
         )
         self.connected_event.set()
@@ -199,18 +194,18 @@ class Probe:
 
     def on_message(self, client: Client, userdata, msg: MQTTMessage):
         """Manager-command dispatcher. Topic format:
-        manager/<fqdn>/v1/<command>. Two gates apply:
+        manager/<fqdn>/<command>. Two gates apply:
             1. command must be in self._allowed_methods
                (PROBE_CAPABILITIES whitelist)
             2. command must resolve to a function via the COMMANDS dict
                — prevents reflection on imported module attributes
         """
         parts = msg.topic.split('/')
-        # Expect manager/<fqdn>/v1/<cmd>; reject anything else early.
-        if len(parts) < 4 or parts[2] != 'v1' or not parts[3]:
+        # Expect manager/<fqdn>/<cmd>; reject anything else early.
+        if len(parts) < 3 or not parts[2]:
             logger.warning('Ignoring malformed topic: %s', msg.topic)
             return
-        method_name = parts[3]
+        method_name = parts[2]
         if method_name not in self._allowed_methods:
             # Log at DEBUG only — disallowed commands are expected on a
             # multi-probe broker (each probe sees managers querying others).
@@ -218,12 +213,12 @@ class Probe:
             # attempt against the capability gate.
             logger.debug('Rejecting disallowed method: %s', method_name)
             response = make_response(error=dict(message='Method not allowed'))
-            client.publish(f'probe/{self.fqdn}/v1/{method_name}', response)
+            client.publish(f'probe/{self.fqdn}/{method_name}', response)
             return
         logger.info('Received method %s', method_name)
         method = getattr(methods, method_name, None) if method_name in COMMANDS else None
         response = make_response(data=dict(status='received'))
-        client.publish(f'probe/{self.fqdn}/v1/{method_name}', response)
+        client.publish(f'probe/{self.fqdn}/{method_name}', response)
         if method is None:
             response = make_response(
                 error=dict(message='Unknown method')
@@ -232,4 +227,4 @@ class Probe:
             args, kwargs = parse_payload(msg.payload)
             response = call_method(method, *args, **kwargs)
         logger.debug(response)
-        client.publish(f'probe/{self.fqdn}/v1/{method_name}', response, qos=1)
+        client.publish(f'probe/{self.fqdn}/{method_name}', response, qos=1)
