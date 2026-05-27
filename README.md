@@ -48,7 +48,7 @@ Zwei Praefixe:
 
 | Topic                       | Retained | QoS | Payload                                                              |
 | --------------------------- | -------- | --- | -------------------------------------------------------------------- |
-| `probe/<fqdn>/connected`    | yes      | 1   | `"1"` online, `"0"` als Last-Will bei unsauberem Disconnect          |
+| `probe/<fqdn>/connected`    | yes      | 1   | `"1"` online (Probe veroeffentlicht kein `"0"` — Manager erkennt offline via Ping-Timeout) |
 | `probe/<fqdn>/capabilities` | yes      | 1   | CSV aus `PROBE_CAPABILITIES`                                         |
 | `probe/<fqdn>/boot_time`    | yes      | 1   | JSON-Envelope mit Unix-Epoch                                         |
 | `probe/<fqdn>/<sensor>`     | no       | 0   | JSON-Envelope mit Sensor-Result, alle 5s                             |
@@ -145,7 +145,7 @@ python src/app.py \
 
 | Variable               | Default | Beschreibung                                            |
 | ---------------------- | ------- | ------------------------------------------------------- |
-| `PROBE_MQTT_KEEPALIVE` | 60      | MQTT-Keepalive-Sek. Niedriger = schnellerer Last-Will.  |
+| `PROBE_MQTT_KEEPALIVE` | 60      | MQTT-Keepalive-Sek. Niedriger = schnellere Disconnect-Erkennung. |
 
 ## Configuration
 

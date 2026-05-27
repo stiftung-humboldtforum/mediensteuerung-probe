@@ -3,7 +3,7 @@ from threading import Event
 from paho.mqtt.client import Client, SubscribeOptions, MQTTMessage
 
 
-from misc import status_response, logger, parse_payload, make_response, VERSION
+from misc import status_response, logger, parse_payload, make_response
 import methods
 from methods import call_method, SENSORS, COMMANDS
 

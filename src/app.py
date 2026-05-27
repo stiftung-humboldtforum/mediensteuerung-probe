@@ -197,11 +197,11 @@ class App:
                     self.notify.status('Connecting...')
 
                 logger.info('Connecting MQTT Host: %s:%s', self.mqtt_hostname, self.mqtt_port)
-                # MQTT keepalive default 60s. Last-Will fires after
-                # ~1.5x keepalive (= 90s broker default). Tests set
-                # PROBE_MQTT_KEEPALIVE=5 for a faster Last-Will trigger.
-                # Garbage env-values fall back to the default instead
-                # of killing _setup() in a ValueError loop.
+                # MQTT keepalive default 60s. Lower values let the broker
+                # detect dead sessions faster; tests use 5s to shorten
+                # disconnect-detection in integration runs. Garbage
+                # env-values fall back to the default instead of killing
+                # _setup() in a ValueError loop.
                 keepalive_raw = os.environ.get('PROBE_MQTT_KEEPALIVE', '60')
                 try:
                     keepalive = int(keepalive_raw)

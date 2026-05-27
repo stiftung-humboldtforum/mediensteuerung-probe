@@ -179,8 +179,11 @@ def running_probe(request, tmp_path):
     env = {
         **os.environ,
         'PYTHONPATH': str(SRC_DIR),
-        # Short MQTT keepalive so integration tests detect dead sessions
-        # quickly rather than waiting the broker default (~90s).
+        # Short MQTT keepalive so integration tests that exercise
+        # reconnect / disconnect paths converge in seconds instead of
+        # waiting the broker default (~90s). Currently no test relies on
+        # this directly; kept as a faster default for any future
+        # disconnect-timing test.
         'PROBE_MQTT_KEEPALIVE': os.environ.get('PROBE_MQTT_KEEPALIVE', '5'),
     }
 
