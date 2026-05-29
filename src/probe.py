@@ -160,7 +160,7 @@ class Probe:
 
     def on_connect(self, client: Client, userdata, flags, reason_code, properties=None):
         """paho-mqtt v2 on_connect callback. Publishes initial state
-        (connected, capabilities, version, boot_time — all retained),
+        (connected, capabilities, boot_time — all retained),
         subscribes to manager-topics, sets connected_event for App.run."""
         logger.info('Connected reason_code=%s flags=%s', reason_code, flags)
         # retain=True so newly subscribing managers see "alive" without

@@ -72,12 +72,13 @@ def test_no_tls_banner_localhost(caplog):
     assert not any('NO AUTH, NO ENCRYPTION' in m for m in messages)
 
 
-def test_no_tls_banner_remote(caplog):
-    """Non-local broker gets the loud security warning."""
+def test_no_tls_remote_refuses(caplog):
+    """Non-local broker + --no_tls: loud warning AND refuse to start
+    (exit 2), so the wide-open mode is never reached by accident."""
     runner = CliRunner()
     with caplog.at_level(logging.WARNING):
-        with patch('app.App.run'):
-            runner.invoke(main, [
+        with patch('app.App.run') as run:
+            result = runner.invoke(main, [
                 '--config_file', '/dev/null',
                 '--mqtt_hostname', 'broker.production.example',
                 '--no_tls',
@@ -86,6 +87,26 @@ def test_no_tls_banner_remote(caplog):
     messages = [r.getMessage() for r in caplog.records]
     assert any('NO AUTH, NO ENCRYPTION' in m for m in messages)
     assert any('Production deployments MUST use TLS' in m for m in messages)
+    assert result.exit_code == 2
+    run.assert_not_called()
+
+
+def test_no_tls_remote_override_allows(caplog):
+    """PROBE_ALLOW_INSECURE_REMOTE=1 overrides the refusal — main proceeds
+    to App.run() (still logging the loud warning)."""
+    runner = CliRunner()
+    with caplog.at_level(logging.WARNING):
+        with patch('app.App.run') as run:
+            result = runner.invoke(main, [
+                '--config_file', '/dev/null',
+                '--mqtt_hostname', 'broker.production.example',
+                '--no_tls',
+                '--loglevel', 'INFO',
+            ], env={'PROBE_ALLOW_INSECURE_REMOTE': '1'})
+    messages = [r.getMessage() for r in caplog.records]
+    assert any('NO AUTH, NO ENCRYPTION' in m for m in messages)
+    assert result.exit_code == 0
+    run.assert_called_once()
 
 
 # --- Lifecycle / cleanup --------------------------------------------------

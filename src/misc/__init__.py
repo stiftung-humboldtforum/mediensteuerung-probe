@@ -9,11 +9,6 @@ import logging
 # package via `from misc import logger`.
 logger = logging.getLogger('humboldt_probe')
 
-# Probe version. Published as a retained MQTT topic on connect so the
-# manager dashboard can detect fleet-version drift. Sync with
-# pyproject.toml when bumping.
-VERSION = '0.2.0'
-
 
 def get_config(config_file: str) -> dict[str, str]:
     """Parse a userconfig.txt with shell-style KEY="value" lines into

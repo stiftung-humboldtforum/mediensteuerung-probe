@@ -290,7 +290,7 @@ class App:
 @click.option('--keyfile', type=str, default='client_key.pem', show_default=True,
               help='Path to client private key (PEM) for mTLS.')
 @click.option('--no_tls', is_flag=True, default=False,
-              help='Disable TLS — for local testing only. Refuses to run against non-localhost without prominent warning.')
+              help='Disable TLS — local testing only. Refuses to start against a non-localhost broker unless PROBE_ALLOW_INSECURE_REMOTE=1 is set.')
 @click.option('--loglevel', type=click.Choice(['CRITICAL', 'ERROR', 'WARNING', 'INFO', 'DEBUG'], case_sensitive=False), default='INFO',
               help='Python logging level.')
 def main(
@@ -324,6 +324,13 @@ def main(
             logger.warning('--no_tls active against non-local broker %s — NO AUTH, NO ENCRYPTION.', mqtt_hostname)
             logger.warning('Anyone on the network can issue probe commands. Production deployments MUST use TLS.')
             logger.warning('%s', banner)
+            # Fail-safe: refuse to run wide-open against a remote broker by
+            # accident. An explicit env override keeps the door open for
+            # deliberate testing against a non-local test broker.
+            if os.environ.get('PROBE_ALLOW_INSECURE_REMOTE') != '1':
+                logger.error('Refusing --no_tls against non-local broker %s. '
+                             'Set PROBE_ALLOW_INSECURE_REMOTE=1 to override (testing only).', mqtt_hostname)
+                sys.exit(2)
 
     if sd_notify is not None:
         notify = sd_notify.Notifier()
