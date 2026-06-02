@@ -37,17 +37,21 @@ def unmute() -> None:
 # --- Power ----------------------------------------------------------------
 
 def shutdown() -> None:
-    """Trigger immediate poweroff via 'shutdown /s /t 0' (Windows
-    built-in)."""
-    cmd = ['shutdown', '/s', '/t', '0']
+    """Trigger poweroff via 'shutdown /s /t 5'. The 5s delay lets paho flush
+    the command-ack to the broker before the OS tears the process down (see
+    reboot())."""
+    cmd = ['shutdown', '/s', '/t', '5']
     result = subprocess.run(cmd, capture_output=True, text=True)
     if result.returncode != 0:
         raise RuntimeError(f'shutdown failed (rc={result.returncode}): {result.stderr.strip()}')
 
 
 def reboot() -> None:
-    """Trigger immediate reboot via 'shutdown /r /t 0'."""
-    cmd = ['shutdown', '/r', '/t', '0']
+    """Trigger reboot via 'shutdown /r /t 5'. The 5s delay lets paho flush the
+    command-ack to the broker before the OS tears the process down -- a /t 0
+    reboot raced the ack, so the manager never saw completion and re-issued
+    the reboot on every reconnect (reboot loop)."""
+    cmd = ['shutdown', '/r', '/t', '5']
     result = subprocess.run(cmd, capture_output=True, text=True)
     if result.returncode != 0:
         raise RuntimeError(f'reboot failed (rc={result.returncode}): {result.stderr.strip()}')

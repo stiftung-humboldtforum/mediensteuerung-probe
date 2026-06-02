@@ -8,6 +8,15 @@ import methods
 from methods import call_method, SENSORS, COMMANDS
 
 
+# Disruptive commands and the minimum uptime (seconds) before the probe will
+# obey one. A reboot/shutdown arriving seconds after boot is almost always a
+# stale, redelivered command (e.g. a manager re-issuing a reboot it never saw
+# acked) -- obeying it produces an endless reboot loop. Refusing it until the
+# box has been up a sane while turns any such loop into at most one reboot.
+_DISRUPTIVE_COMMANDS = {'reboot', 'shutdown'}
+_MIN_UPTIME_FOR_DISRUPTIVE_S = 120
+
+
 class Probe:
     """Sensor poller and manager-command dispatcher.
 
@@ -215,6 +224,26 @@ class Probe:
             response = make_response(error=dict(message='Method not allowed'))
             client.publish(f'probe/{self.fqdn}/{method_name}', response)
             return
+        # Reboot-loop guard: refuse a disruptive command that lands moments
+        # after boot (stale / redelivered). Without it, a reboot the manager
+        # keeps re-issuing reboots the box forever.
+        if method_name in _DISRUPTIVE_COMMANDS:
+            try:
+                up = methods.uptime()
+            except Exception:
+                up = None
+            if up is not None and up < _MIN_UPTIME_FOR_DISRUPTIVE_S:
+                logger.warning(
+                    'Refusing %s: uptime %.0fs < %ds (reboot-loop guard)',
+                    method_name, up, _MIN_UPTIME_FOR_DISRUPTIVE_S,
+                )
+                client.publish(
+                    f'probe/{self.fqdn}/{method_name}',
+                    make_response(error=dict(
+                        message=f'refused: uptime {int(up)}s below {_MIN_UPTIME_FOR_DISRUPTIVE_S}s guard'
+                    )),
+                )
+                return
         logger.info('Received method %s', method_name)
         method = getattr(methods, method_name, None) if method_name in COMMANDS else None
         response = make_response(data=dict(status='received'))
