@@ -97,7 +97,7 @@ def test_win32_shutdown_calls_shutdown_s(mock_run):
     from methods import _win32
     _win32.shutdown()
     args = mock_run.call_args[0][0]
-    assert args == ['shutdown', '/s', '/t', '0']
+    assert args == ['shutdown', '/s', '/t', '5']
 
 
 @patch('methods._win32.subprocess.run')
@@ -106,7 +106,7 @@ def test_win32_reboot_calls_shutdown_r(mock_run):
     from methods import _win32
     _win32.reboot()
     args = mock_run.call_args[0][0]
-    assert args == ['shutdown', '/r', '/t', '0']
+    assert args == ['shutdown', '/r', '/t', '5']
 
 
 @patch('methods._win32.subprocess.run')
@@ -148,12 +148,12 @@ def _make_lhm_hardware(hw_name, hw_type, sensors, sub_sensors=()):
     return hw
 
 
-def test_win32_lhm_temperatures_filters_to_cpu_gpu():
-    """Mainboard / disk sensors must be filtered out — only CPU/GPU
-    temperatures land in the result."""
+def test_win32_lhm_temperatures_coretemp_shape():
+    """CPU temps are remapped to the avorus-ui 'coretemp' payload: package
+    first, then per-core, with numeric high/critical (TjMax = core + margin).
+    Aggregates ('Core Max') and non-CPU hardware are dropped."""
     from methods import _win32
 
-    # Reset any previously cached LHM state
     _win32._lhm_computer = None
 
     SensorType = MagicMock()
@@ -161,25 +161,29 @@ def test_win32_lhm_temperatures_filters_to_cpu_gpu():
     SensorType.Fan = 'FAN'
     _WIN_MOCKS['lhm_hw'].SensorType = SensorType
 
-    cpu_sensor = _make_lhm_sensor('Core 0', 55.0, 'TEMP', 'TEMP')
-    mb_sensor = _make_lhm_sensor('Motherboard', 35.0, 'TEMP', 'TEMP')
-    gpu_sensor = _make_lhm_sensor('GPU Core', 60.0, 'TEMP', 'TEMP')
+    pkg = _make_lhm_sensor('CPU Package', 55.0, 'TEMP', 'TEMP')
+    core1 = _make_lhm_sensor('CPU Core #1', 40.0, 'TEMP', 'TEMP')
+    dist1 = _make_lhm_sensor('CPU Core #1 Distance to TjMax', 60.0, 'TEMP', 'TEMP')
+    agg = _make_lhm_sensor('Core Max', 55.0, 'TEMP', 'TEMP')
+    mb = _make_lhm_sensor('Motherboard', 35.0, 'TEMP', 'TEMP')
 
-    cpu_hw = _make_lhm_hardware('Intel Core i7', 'Cpu', [cpu_sensor])
-    mb_hw = _make_lhm_hardware('Z690 Board', 'Motherboard', [mb_sensor])
-    gpu_hw = _make_lhm_hardware('NVIDIA RTX 4080', 'GpuNvidia', [gpu_sensor])
+    cpu_hw = _make_lhm_hardware('Intel Core i7', 'Cpu', [pkg, core1, dist1, agg])
+    mb_hw = _make_lhm_hardware('Z690 Board', 'Motherboard', [mb])
 
     computer = MagicMock()
-    computer.Hardware = [cpu_hw, mb_hw, gpu_hw]
+    computer.Hardware = [cpu_hw, mb_hw]
     _WIN_MOCKS['lhm_hw'].Computer.return_value = computer
 
     result = _win32.temperatures()
 
-    assert 'Intel Core i7' in result, 'CPU temp should appear'
-    assert 'NVIDIA RTX 4080' in result, 'GPU temp should appear'
-    assert 'Z690 Board' not in result, 'Motherboard temp should be filtered out'
-    assert result['Intel Core i7'][0]['current'] == 55.0
-    assert result['NVIDIA RTX 4080'][0]['current'] == 60.0
+    assert list(result.keys()) == ['coretemp']
+    ct = result['coretemp']
+    assert ct[0]['label'] == 'Package id 0' and ct[0]['current'] == 55.0
+    assert ct[1]['label'] == 'Core 0' and ct[1]['current'] == 40.0
+    # TjMax = 40 + 60 = 100 -> numeric high/critical for the UI hue maths
+    assert ct[0]['high'] == 100.0 and ct[1]['critical'] == 100.0
+    # aggregates ('Core Max') and motherboard temps dropped
+    assert all('Max' not in e['label'] for e in ct)
 
 
 def test_win32_lhm_fans_only_keeps_cpu_gpu_labeled():
@@ -209,9 +213,10 @@ def test_win32_lhm_fans_only_keeps_cpu_gpu_labeled():
 
     result = _win32.fans()
 
-    # CPU- und GPU-Fans drin, Case-Fan gefiltert
-    flat = [(hw, s['label']) for hw, sensors in result.items() for s in sensors]
-    labels = [label for (_, label) in flat]
+    # All readable cpu/gpu fans land under the single 'dell_smm' key the
+    # avorus-ui Fans component renders; the case fan is filtered out.
+    assert list(result.keys()) == ['dell_smm']
+    labels = [s['label'] for s in result['dell_smm']]
     assert 'CPU Fan' in labels
     assert 'GPU Fan #1' in labels
     assert 'Case Fan #1' not in labels
@@ -219,39 +224,15 @@ def test_win32_lhm_fans_only_keeps_cpu_gpu_labeled():
 
 # --- Display (Win32 EnumDisplaySettings) -----------------------------------
 
-@patch('methods._win32.ctypes')
-def test_win32_display_returns_resolution_string(mock_ctypes):
-    """Mock the EnumDisplaySettingsW call — verify return-format is
-    'WIDTHxHEIGHT, RATE Hz'."""
+@patch('methods._win32.subprocess.run')
+def test_win32_display_returns_resolution_string(mock_run):
+    """display() returns the WMI Win32_VideoController line verbatim
+    ('WIDTHxHEIGHT, RATE Hz'). EnumDisplaySettings is no longer used --
+    it is session-bound and wrong from the session-0 service."""
     from methods import _win32
-
-    # EnumDisplaySettingsW returns truthy; DEVMODE struct gets filled.
-    mock_ctypes.windll.user32.EnumDisplaySettingsW.return_value = 1
-
-    # Configure the DEVMODE-instance the code creates locally — patching
-    # ctypes.Structure isn't easy, so we route via the side_effect of
-    # EnumDisplaySettingsW: it 'fills' the struct passed in.
-    def _fill_devmode(name, mode_num, dm_byref):
-        dm = dm_byref._obj
-        dm.dmPelsWidth = 1920
-        dm.dmPelsHeight = 1080
-        dm.dmDisplayFrequency = 60
-        return 1
-
-    mock_ctypes.windll.user32.EnumDisplaySettingsW.side_effect = _fill_devmode
-    # ctypes.byref must still wrap the DEVMODE so we can read it back
-    mock_ctypes.byref.side_effect = lambda x: type('Byref', (), {'_obj': x})()
-    # ctypes.sizeof needed for dm.dmSize
-    mock_ctypes.sizeof.return_value = 220
-    # Need the wintypes still
-    import ctypes as real_ctypes
-    mock_ctypes.Structure = real_ctypes.Structure
-    mock_ctypes.wintypes = real_ctypes.wintypes
-    mock_ctypes.c_long = real_ctypes.c_long
-    mock_ctypes.c_short = real_ctypes.c_short
-
-    result = _win32.display()
-    assert result == '1920x1080, 60 Hz'
+    mock_run.return_value.returncode = 0
+    mock_run.return_value.stdout = '3840x2160, 30 Hz\n'
+    assert _win32.display() == '3840x2160, 30 Hz'
 
 
 # --- DLL hash verification ------------------------------------------------
@@ -328,18 +309,10 @@ def test_verify_dll_hashes_cached(tmp_path):
     _win32._verify_dll_hashes(str(tmp_path))  # cached → no exception
 
 
-@patch('methods._win32.ctypes')
-def test_win32_display_returns_none_on_api_failure(mock_ctypes):
-    """EnumDisplaySettingsW returning 0 → display() returns None."""
+@patch('methods._win32.subprocess.run')
+def test_win32_display_returns_none_on_failure(mock_run):
+    """Non-zero powershell/WMI exit → display() returns None."""
     from methods import _win32
-
-    mock_ctypes.windll.user32.EnumDisplaySettingsW.return_value = 0
-    mock_ctypes.sizeof.return_value = 220
-    mock_ctypes.byref = lambda x: x
-    import ctypes as real_ctypes
-    mock_ctypes.Structure = real_ctypes.Structure
-    mock_ctypes.wintypes = real_ctypes.wintypes
-    mock_ctypes.c_long = real_ctypes.c_long
-    mock_ctypes.c_short = real_ctypes.c_short
-
+    mock_run.return_value.returncode = 1
+    mock_run.return_value.stdout = ''
     assert _win32.display() is None

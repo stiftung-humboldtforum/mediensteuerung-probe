@@ -138,58 +138,89 @@ def _get_lhm_computer():
     return _lhm_computer
 
 
-def _get_lhm_sensors(sensor_type):
-    """Aggregate Temperature or Fan sensors from the LHM hardware
-    list. Filters to CPU/GPU hardware so motherboard and SSD sensors
-    don't sneak in (the manager doesn't need them). Temperature schema
-    matches Linux psutil: {hw_name: [{label, current, high, critical}, ...]};
-    fans: {hw_name: [{label, current}, ...]}."""
+def _iter_lhm_sensors(target_name):
+    """Yield (hardware, sensor_name, value) for every sensor of the given
+    type ('Temperature' or 'Fan') across all hardware + sub-hardware."""
     c = _get_lhm_computer()
     from LibreHardwareMonitor.Hardware import SensorType
-    target = {'Temperature': SensorType.Temperature, 'Fan': SensorType.Fan}[sensor_type]
-    results: dict[str, list[dict]] = {}
+    target = getattr(SensorType, target_name)
     for hw in c.Hardware:
         hw.Update()
-        hw_type = str(hw.HardwareType)
-        is_cpu_gpu = hw_type == 'Cpu' or 'Gpu' in hw_type
-        all_sensors = []
+        sensors = list(hw.Sensors)
         for sub in hw.SubHardware:
             sub.Update()
-            all_sensors.extend(sub.Sensors)
-        all_sensors.extend(hw.Sensors)
-        for sensor in all_sensors:
-            if sensor.SensorType != target:
-                continue
-            label = str(sensor.Name)
-            key = str(hw.Name)
-            entry = {'label': label, 'current': round(float(sensor.Value), 1)}
-            if sensor_type == 'Temperature' and is_cpu_gpu:
-                # LHM exposes a "... Distance to TjMax" sensor as a Temperature
-                # type, but its value is a margin, not a temperature -- drop it
-                # so it is not shown as a bogus reading.
-                if 'distance to tjmax' in label.lower():
-                    continue
-                # Match the Linux psutil schema exactly: each temperature entry
-                # carries high/critical. LHM has no per-sensor threshold, so
-                # report None -- the keys are present, so a manager that reads
-                # entry['high']/['critical'] renders this like the Linux payload
-                # instead of skipping CPU temps on a KeyError.
-                entry['high'] = None
-                entry['critical'] = None
-                results.setdefault(key, []).append(entry)
-            elif sensor_type == 'Fan' and ('cpu' in label.lower() or 'gpu' in label.lower()):
-                results.setdefault(key, []).append(entry)
-    return results
+            sensors.extend(sub.Sensors)
+        for s in sensors:
+            if s.SensorType == target:
+                yield hw, str(s.Name), float(s.Value)
 
 
 def temperatures() -> dict[str, list[dict]]:
-    """CPU/GPU temperatures via LibreHardwareMonitor."""
-    return _get_lhm_sensors('Temperature')
+    """CPU temperatures as the 'coretemp' payload the avorus-ui sensors
+    component expects: a single 'coretemp' key whose first entry is the CPU
+    package, the rest per-core, each with a numeric high/critical (= CPU
+    TjMax) so the UI's hue maths (1 - current/high) works.
+
+    avorus-ui renders ONLY temperatures['coretemp'] and treats [0] as the
+    package, so the LHM per-hardware-model key ('Intel Core i9-...') showed
+    nothing. We mirror the Linux psutil 'coretemp' shape instead.
+    LibreHardwareMonitor reports per-core temps plus a "... Distance to TjMax"
+    margin sensor; TjMax = core_temp + margin gives the real critical/high.
+    """
+    import re
+    core_temp: dict[int, float] = {}
+    core_dist: dict[int, float] = {}
+    package: Optional[float] = None
+    for hw, name, value in _iter_lhm_sensors('Temperature'):
+        if str(hw.HardwareType) != 'Cpu':
+            continue
+        if name == 'CPU Package':
+            package = round(value, 1)
+            continue
+        m = re.match(r'CPU Core #(\d+)( Distance to TjMax)?$', name)
+        if not m:
+            continue  # ignore 'Core Max' / 'Core Average' aggregates
+        idx = int(m.group(1))
+        if m.group(2):
+            core_dist[idx] = value
+        else:
+            core_temp[idx] = round(value, 1)
+
+    if package is None and not core_temp:
+        return {}
+
+    tjmax = None
+    for idx, cur in core_temp.items():
+        if idx in core_dist:
+            tjmax = round(cur + core_dist[idx], 1)
+            break
+    if tjmax is None:
+        tjmax = 100.0  # Intel desktop TjMax fallback
+
+    coretemp: list[dict] = []
+    if package is not None:
+        coretemp.append({'label': 'Package id 0', 'current': package, 'high': tjmax, 'critical': tjmax})
+    for idx in sorted(core_temp):
+        coretemp.append({'label': f'Core {idx - 1}', 'current': core_temp[idx], 'high': tjmax, 'critical': tjmax})
+    return {'coretemp': coretemp}
 
 
 def fans() -> dict[str, list[dict]]:
-    """CPU/GPU fan speeds via LibreHardwareMonitor."""
-    return _get_lhm_sensors('Fan')
+    """Fan speeds under the 'dell_smm' key the avorus-ui Fans component
+    renders (it shows only 'nct6795' / 'dell_smm', the Linux hwmon driver
+    names; the kiosk fleet is Dell). LibreHardwareMonitor keys fans by
+    hardware model, so we collect the readable CPU/GPU fans and republish
+    them under 'dell_smm'.
+
+    NOTE: on these Dell workstations LHM only exposes the GPU fan -- the
+    CPU/chassis fans are governed by the Dell EC and are not readable from
+    Windows (Win32_Fan reports no RPM either), so only the GPU fan appears.
+    """
+    out = []
+    for hw, name, value in _iter_lhm_sensors('Fan'):
+        if 'cpu' in name.lower() or 'gpu' in name.lower():
+            out.append({'label': name, 'current': round(value, 1)})
+    return {'dell_smm': out} if out else {}
 
 
 # --- Misc -----------------------------------------------------------------
