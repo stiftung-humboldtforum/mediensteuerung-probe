@@ -186,9 +186,10 @@ def test_win32_lhm_temperatures_coretemp_shape():
     assert all('Max' not in e['label'] for e in ct)
 
 
-def test_win32_lhm_fans_only_keeps_cpu_gpu_labeled():
-    """Fan-Filter: nur Sensoren mit 'cpu' oder 'gpu' im Label — case
-    insensitive."""
+def test_win32_lhm_fans_system_only_under_dell_smm():
+    """System/chassis fans (non-GPU hardware) land under 'dell_smm'; the GPU
+    fan is excluded -- it is not a system fan and would be a wrong value the
+    manager cannot distinguish from one."""
     from methods import _win32
 
     _win32._lhm_computer = None
@@ -199,27 +200,45 @@ def test_win32_lhm_fans_only_keeps_cpu_gpu_labeled():
     _WIN_MOCKS['lhm_hw'].SensorType = SensorType
 
     cpu_fan = _make_lhm_sensor('CPU Fan', 1500, 'FAN', 'FAN')
-    case_fan = _make_lhm_sensor('Case Fan #1', 800, 'FAN', 'FAN')
+    sys_fan = _make_lhm_sensor('System Fan #1', 800, 'FAN', 'FAN')
     gpu_fan = _make_lhm_sensor('GPU Fan #1', 2000, 'FAN', 'FAN')
 
-    cpu_hw = _make_lhm_hardware('Intel Core i7', 'Cpu',
-                                 [cpu_fan, case_fan])
-    gpu_hw = _make_lhm_hardware('NVIDIA RTX 4080', 'GpuNvidia',
-                                 [gpu_fan])
+    mb_hw = _make_lhm_hardware('Dell Board', 'Motherboard', [cpu_fan, sys_fan])
+    gpu_hw = _make_lhm_hardware('NVIDIA RTX 4080', 'GpuNvidia', [gpu_fan])
 
     computer = MagicMock()
-    computer.Hardware = [cpu_hw, gpu_hw]
+    computer.Hardware = [mb_hw, gpu_hw]
     _WIN_MOCKS['lhm_hw'].Computer.return_value = computer
 
     result = _win32.fans()
 
-    # All readable cpu/gpu fans land under the single 'dell_smm' key the
-    # avorus-ui Fans component renders; the case fan is filtered out.
     assert list(result.keys()) == ['dell_smm']
     labels = [s['label'] for s in result['dell_smm']]
     assert 'CPU Fan' in labels
-    assert 'GPU Fan #1' in labels
-    assert 'Case Fan #1' not in labels
+    assert 'System Fan #1' in labels
+    assert 'GPU Fan #1' not in labels
+
+
+def test_win32_lhm_fans_gpu_only_returns_empty():
+    """Dell workstations expose only the GPU fan to LHM -> no system fan ->
+    return {} rather than a misleading GPU-as-system reading."""
+    from methods import _win32
+
+    _win32._lhm_computer = None
+
+    SensorType = MagicMock()
+    SensorType.Temperature = 'TEMP'
+    SensorType.Fan = 'FAN'
+    _WIN_MOCKS['lhm_hw'].SensorType = SensorType
+
+    gpu_fan = _make_lhm_sensor('GPU Fan', 1500, 'FAN', 'FAN')
+    gpu_hw = _make_lhm_hardware('NVIDIA Quadro RTX 4000', 'GpuNvidia', [gpu_fan])
+
+    computer = MagicMock()
+    computer.Hardware = [gpu_hw]
+    _WIN_MOCKS['lhm_hw'].Computer.return_value = computer
+
+    assert _win32.fans() == {}
 
 
 # --- Display (Win32 EnumDisplaySettings) -----------------------------------

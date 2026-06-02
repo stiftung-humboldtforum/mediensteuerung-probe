@@ -206,20 +206,23 @@ def temperatures() -> dict[str, list[dict]]:
 
 
 def fans() -> dict[str, list[dict]]:
-    """Fan speeds under the 'dell_smm' key the avorus-ui Fans component
-    renders (it shows only 'nct6795' / 'dell_smm', the Linux hwmon driver
-    names; the kiosk fleet is Dell). LibreHardwareMonitor keys fans by
-    hardware model, so we collect the readable CPU/GPU fans and republish
-    them under 'dell_smm'.
+    """System/chassis fan speeds under the 'dell_smm' key the avorus-ui Fans
+    component renders (it shows only the Linux hwmon driver keys 'nct6795' /
+    'dell_smm'; the kiosk fleet is Dell).
 
-    NOTE: on these Dell workstations LHM only exposes the GPU fan -- the
-    CPU/chassis fans are governed by the Dell EC and are not readable from
-    Windows (Win32_Fan reports no RPM either), so only the GPU fan appears.
+    Only NON-GPU fans are reported. The GPU fan is not a system fan, and
+    publishing it under 'dell_smm' would surface a value the manager cannot
+    tell apart from the real system fan -- a wrong reading is worse than none.
+    On these Dell workstations LHM exposes ONLY the GPU fan (the CPU/chassis
+    fans are governed by the Dell EC and expose no RPM to Windows), so this
+    returns {} and the UI shows no fan. When a board does expose system/CPU
+    fans to LHM they appear here.
     """
     out = []
     for hw, name, value in _iter_lhm_sensors('Fan'):
-        if 'cpu' in name.lower() or 'gpu' in name.lower():
-            out.append({'label': name, 'current': round(value, 1)})
+        if 'Gpu' in str(hw.HardwareType):
+            continue  # GPU fan != system fan; would be a wrong dell_smm value
+        out.append({'label': name, 'current': round(value, 1)})
     return {'dell_smm': out} if out else {}
 
 
