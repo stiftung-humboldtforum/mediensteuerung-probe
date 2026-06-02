@@ -137,8 +137,9 @@ def _get_lhm_computer():
 def _get_lhm_sensors(sensor_type):
     """Aggregate Temperature or Fan sensors from the LHM hardware
     list. Filters to CPU/GPU hardware so motherboard and SSD sensors
-    don't sneak in (the manager doesn't need them). Schema matches
-    the Linux psutil one: {hw_name: [{label, current}, ...]}."""
+    don't sneak in (the manager doesn't need them). Temperature schema
+    matches Linux psutil: {hw_name: [{label, current, high, critical}, ...]};
+    fans: {hw_name: [{label, current}, ...]}."""
     c = _get_lhm_computer()
     from LibreHardwareMonitor.Hardware import SensorType
     target = {'Temperature': SensorType.Temperature, 'Fan': SensorType.Fan}[sensor_type]
@@ -158,8 +159,19 @@ def _get_lhm_sensors(sensor_type):
             label = str(sensor.Name)
             key = str(hw.Name)
             entry = {'label': label, 'current': round(float(sensor.Value), 1)}
-            # Schema matches Linux psutil (mehrere Sensoren pro Hardware).
             if sensor_type == 'Temperature' and is_cpu_gpu:
+                # LHM exposes a "... Distance to TjMax" sensor as a Temperature
+                # type, but its value is a margin, not a temperature -- drop it
+                # so it is not shown as a bogus reading.
+                if 'distance to tjmax' in label.lower():
+                    continue
+                # Match the Linux psutil schema exactly: each temperature entry
+                # carries high/critical. LHM has no per-sensor threshold, so
+                # report None -- the keys are present, so a manager that reads
+                # entry['high']/['critical'] renders this like the Linux payload
+                # instead of skipping CPU temps on a KeyError.
+                entry['high'] = None
+                entry['critical'] = None
                 results.setdefault(key, []).append(entry)
             elif sensor_type == 'Fan' and ('cpu' in label.lower() or 'gpu' in label.lower()):
                 results.setdefault(key, []).append(entry)
@@ -184,37 +196,31 @@ def uptime() -> float:
 
 
 def display() -> Optional[str]:
-    """Active display mode as 'WIDTHxHEIGHT, RATE Hz' via the Win32
-    EnumDisplaySettingsW API."""
-    class DEVMODE(ctypes.Structure):
-        _fields_ = [
-            ("dmDeviceName", ctypes.wintypes.WCHAR * 32),
-            ("dmSpecVersion", ctypes.wintypes.WORD),
-            ("dmDriverVersion", ctypes.wintypes.WORD),
-            ("dmSize", ctypes.wintypes.WORD),
-            ("dmDriverExtra", ctypes.wintypes.WORD),
-            ("dmFields", ctypes.wintypes.DWORD),
-            ("dmPositionX", ctypes.c_long),
-            ("dmPositionY", ctypes.c_long),
-            ("dmDisplayOrientation", ctypes.wintypes.DWORD),
-            ("dmDisplayFixedOutput", ctypes.wintypes.DWORD),
-            ("dmColor", ctypes.c_short),
-            ("dmDuplex", ctypes.c_short),
-            ("dmYResolution", ctypes.c_short),
-            ("dmTTOption", ctypes.c_short),
-            ("dmCollate", ctypes.c_short),
-            ("dmFormName", ctypes.wintypes.WCHAR * 32),
-            ("dmLogPixels", ctypes.wintypes.WORD),
-            ("dmBitsPerPel", ctypes.wintypes.DWORD),
-            ("dmPelsWidth", ctypes.wintypes.DWORD),
-            ("dmPelsHeight", ctypes.wintypes.DWORD),
-            ("dmDisplayFlags", ctypes.wintypes.DWORD),
-            ("dmDisplayFrequency", ctypes.wintypes.DWORD),
-        ]
+    """Active display mode as 'WIDTHxHEIGHT, RATE Hz'.
 
-    dm = DEVMODE()
-    dm.dmSize = ctypes.sizeof(DEVMODE)
-    ENUM_CURRENT_SETTINGS = -1
-    if ctypes.windll.user32.EnumDisplaySettingsW(None, ENUM_CURRENT_SETTINGS, ctypes.byref(dm)):
-        return f'{dm.dmPelsWidth}x{dm.dmPelsHeight}, {dm.dmDisplayFrequency} Hz'
-    return None
+    Read via WMI Win32_VideoController, NOT EnumDisplaySettings: the probe
+    runs as a service in session 0, where EnumDisplaySettings returns the
+    headless session-0 default (1024x768) instead of the real console
+    display. Win32_VideoController exposes the driver's current mode and is
+    session-independent. Pick the controller with the largest current
+    resolution (an inactive/secondary GPU reports a null resolution).
+    """
+    ps = (
+        "Get-CimInstance Win32_VideoController | "
+        "Where-Object { $_.CurrentHorizontalResolution } | "
+        "Sort-Object CurrentHorizontalResolution -Descending | "
+        "Select-Object -First 1 | ForEach-Object { "
+        "\"$($_.CurrentHorizontalResolution)x$($_.CurrentVerticalResolution), "
+        "$($_.CurrentRefreshRate) Hz\" }"
+    )
+    try:
+        out = subprocess.run(
+            ['powershell', '-NoProfile', '-NonInteractive', '-Command', ps],
+            capture_output=True, text=True, timeout=10,
+        )
+    except Exception:
+        return None
+    if out.returncode != 0:
+        return None
+    line = out.stdout.strip()
+    return line or None
