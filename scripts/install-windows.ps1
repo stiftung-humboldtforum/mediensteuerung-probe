@@ -9,7 +9,7 @@
     stdout/stderr into a rotating log file.
 
     Re-running the script with different arguments updates the existing
-    service in place (stop → reconfigure → start).
+    service in place (stop -> reconfigure -> start).
 
 .PARAMETER InstallPath
     Where the source tree lives. Default: C:\humboldt-probe
@@ -28,7 +28,7 @@
     client_key.pem im -InstallPath. Override per Param.
 
 .PARAMETER NoTls
-    Schaltet TLS ab. Nur fuer lokales Testing — siehe Banner-Warnung
+    Schaltet TLS ab. Nur fuer lokales Testing -- siehe Banner-Warnung
     der App.
 
 .PARAMETER LogLevel
@@ -79,7 +79,7 @@ function Assert-Command($cmd) {
 Assert-Command nssm
 
 if (-not (Test-Path $PythonExe)) {
-    throw "Python executable not found at $PythonExe — install via 'winget install Python.Python.3.13 --scope machine' or pass -PythonExe."
+    throw "Python executable not found at $PythonExe -- install via 'winget install Python.Python.3.13 --scope machine' or pass -PythonExe."
 }
 
 if (-not (Test-Path $InstallPath)) {
@@ -133,11 +133,34 @@ $appArgsString = $appArgs -join ' '
 # not exist; check $LASTEXITCODE explicitly because PowerShell's `if`
 # truthiness on a string ("Service does not exist") would otherwise
 # wrongly conclude "service exists" and skip the install branch.
-nssm status $ServiceName 2>$null | Out-Null
-$serviceExists = ($LASTEXITCODE -eq 0)
+#
+# Under Windows PowerShell 5.1 with $ErrorActionPreference='Stop', a native
+# command writing to stderr is promoted to a terminating error -- which would
+# abort the script here on a fresh box before the install branch is ever
+# reached. Probe under SilentlyContinue and key off $LASTEXITCODE, then
+# restore the previous preference.
+$serviceExists = $false
+$prevEAP = $ErrorActionPreference
+$ErrorActionPreference = 'SilentlyContinue'
+try {
+    nssm status $ServiceName 2>$null | Out-Null
+    $serviceExists = ($LASTEXITCODE -eq 0)
+} finally {
+    $ErrorActionPreference = $prevEAP
+}
 if ($serviceExists) {
-    Write-Host "Service '$ServiceName' exists — stopping for reconfigure..."
-    nssm stop $ServiceName confirm | Out-Null
+    Write-Host "Service '$ServiceName' exists -- stopping for reconfigure..."
+    # Stopping an already-stopped service makes nssm write to stderr and exit
+    # non-zero, which 'Stop' would again promote to a terminating error and
+    # break re-run idempotency. A failed stop is harmless here -- the nssm set
+    # calls below take effect on the next start regardless -- so swallow it.
+    $prevEAP = $ErrorActionPreference
+    $ErrorActionPreference = 'SilentlyContinue'
+    try {
+        nssm stop $ServiceName confirm 2>$null | Out-Null
+    } finally {
+        $ErrorActionPreference = $prevEAP
+    }
 } else {
     Write-Host "Installing service '$ServiceName'..."
     nssm install $ServiceName $PythonExe $appArgsString
@@ -158,12 +181,12 @@ nssm set $ServiceName AppRestartDelay 5000                      | Out-Null
 if ($ServiceUser) {
     # Quote $ServiceUser so accounts with spaces ("NT AUTHORITY\Network
     # Service" / "DOMAIN\svc account") are passed as a single argv
-    # element — otherwise PowerShell's call operator splits on spaces
+    # element -- otherwise PowerShell's call operator splits on spaces
     # and NSSM silently misparses the user.
     if ($ServicePassword) {
         # Decrypt only at the point of use and zero the buffer right
         # after. The password is briefly exposed on the nssm.exe
-        # command line — but no longer held in plaintext anywhere
+        # command line -- but no longer held in plaintext anywhere
         # script-side, and SecureString avoids it ever existing in
         # plaintext in the caller's PowerShell history.
         $bstr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($ServicePassword)
