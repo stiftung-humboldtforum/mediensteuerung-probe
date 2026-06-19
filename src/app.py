@@ -25,6 +25,11 @@ except ImportError:
 from probe import Probe
 from misc import get_config, logger
 
+# Build identifier — distinguishes installed probe variants in the logs
+# (v1 = stock main; this branch = v2-demo). Logged at every (re)connect so the
+# switcher can confirm which version is live via probe.log.
+PROBE_BUILD = 'v2-demo'
+
 
 class FqdnChanged(RuntimeError):
     """Raised when socket.getfqdn() returns a different value than at
@@ -106,6 +111,7 @@ class App:
         backoff."""
         self._refresh_fqdn()
         logger.info('FQDN: %s', self.fqdn)
+        logger.info('PROBE BUILD: %s', PROBE_BUILD)
         self.mqtt_client = mqtt.Client(
             callback_api_version=mqtt.CallbackAPIVersion.VERSION2,
             client_id=self.fqdn,
