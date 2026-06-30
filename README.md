@@ -31,7 +31,7 @@ tests/                         pytest unit + integration (Mosquitto extern)
 scripts/
   smoke-test.sh                MQTT-Verifikation pre-/post-deploy
   hardware-test-{linux,windows}.* Hardware-Sensor-Checks am Geraet
-  install-windows.ps1          Idempotenter NSSM-Service-Setup
+  install-windows.ps1          Idempotenter shawl-Service-Setup
   mpv_control.example.sh       Reference-Impl fuer mpv_file_pos_sec
 systemd/humboldt-probe.service Reference-Unit (Type=notify, WatchdogSec=30s)
 lib/win32/                     LibreHardwareMonitorLib.dll + HidSharp.dll
@@ -90,7 +90,7 @@ oder bei Fehler:
 - Python 3.13 system-wide (`winget install Python.Python.3.13 --scope machine`)
 - Netzwerk-Zugang zum MQTT-Broker
 - LibreHardwareMonitorLib.dll + HidSharp.dll in `lib/win32/` (im Repo)
-- NSSM fuer Service-Betrieb
+- shawl fuer Service-Betrieb (`winget install mtkennerly.shawl`)
 
 ## Installation
 
@@ -201,15 +201,15 @@ journalctl -u humboldt-probe -f
 `Type=notify` mit `WatchdogSec=30s` — gestallter Probe wird automatisch
 neu gestartet.
 
-### Windows (NSSM)
+### Windows (shawl)
 
 ```powershell
-winget install NSSM.NSSM
+winget install mtkennerly.shawl
 .\scripts\install-windows.ps1   # Default: srv-control-avm + Certs aus C:\humboldt-probe\
-nssm {start|stop|restart|status} HumboldtProbe
+Get-Service HumboldtProbe       # bzw. Start-Service / Stop-Service / Restart-Service
 ```
 
-NSSM startet die Probe bei Boot und nach Crash automatisch neu.
+shawl startet die Probe bei Boot und nach Crash automatisch neu (`--restart`).
 
 ## Operations
 
@@ -230,8 +230,9 @@ mTLS-Zertifikate haben begrenzte Lifetime. Vor Ablauf:
 1. Neue Cert+Key auf Kiosk legen (gleiche Dateinamen ueberschreiben).
 2. Service neu starten:
    - Linux: `sudo systemctl restart humboldt-probe`
-   - Windows: `nssm restart HumboldtProbe`
-3. Verify: `journalctl -u humboldt-probe -n 50` (Linux) bzw. NSSM-Logfile.
+   - Windows: `Restart-Service HumboldtProbe`
+3. Verify: `journalctl -u humboldt-probe -n 50` (Linux) bzw.
+   `C:\humboldt-probe\probe_rCURRENT.log` (Windows).
 
 ### Update / Rollback
 
@@ -258,7 +259,7 @@ Dashboard kann Fleet-Drift erkennen.
 | `Setup failed, retrying in 5s` Loop | Persistent error in `_setup` (cert / hostname / config_file) | `journalctl -u humboldt-probe -n 50` zeigt Stacktrace; ersten Fehler beheben |
 | Manager sieht `connected="1"` aber keine Sensor-Daten | `PROBE_METHODS` leer oder nur unbekannte Sensoren | `cat userconfig.txt` und Log nach `Ignoring unknown PROBE_METHODS` durchsuchen |
 | Manager-Command `mute` antwortet `Method not allowed` | `mute` fehlt in `PROBE_CAPABILITIES` | `userconfig.txt` ergaenzen, Service neu starten |
-| `probe/<fqdn>/temperatures` ist `{}` (leer, Windows) | LHM braucht Admin-Rechte; NSSM-Service als LocalSystem oder Admin-User starten | `nssm set HumboldtProbe ObjectName <Admin-User> ...` |
+| `probe/<fqdn>/temperatures` ist `{}` (leer, Windows) | LHM braucht Admin-Rechte; Service als LocalSystem (Default) oder Admin-User starten | `install-windows.ps1` ohne `-ServiceUser` (= LocalSystem), oder `sc config HumboldtProbe obj= <Admin-User> password= <pw>` |
 | `wpctl: command not found` (Linux) | PipeWire/WirePlumber nicht installiert | `sudo apt install pipewire wireplumber` |
 | `Cannot read config ...` | userconfig.txt-Pfad falsch oder Permissions | `ls -la` + ggf. owner-Anpassung an Probe-User |
 

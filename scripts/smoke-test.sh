@@ -3,7 +3,7 @@
 #
 # Verifies that a running probe responds correctly via an MQTT broker.
 # Run this AFTER the probe is started (systemctl start humboldt-probe
-# or via NSSM), against the same broker the probe connects to.
+# or via shawl), against the same broker the probe connects to.
 #
 # Requirements: mosquitto-clients (mosquitto_sub / mosquitto_pub).
 #   macOS:   brew install mosquitto

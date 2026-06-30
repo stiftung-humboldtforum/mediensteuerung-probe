@@ -34,7 +34,7 @@ cd mediensteuerung-probe
 
 # einmalig (als Admin)
 winget install Python.Python.3.13 --scope machine
-winget install NSSM.NSSM EclipseFoundation.Mosquitto Git.Git
+winget install mtkennerly.shawl EclipseFoundation.Mosquitto Git.Git
 pip install -r requirements-dev.txt
 
 # Tests (PowerShell als Administrator — LHM braucht's fuer Sensoren)
@@ -53,6 +53,6 @@ pytest
 | Wo            | Was wird getestet                                   | Setup       |
 | ------------- | --------------------------------------------------- | ----------- |
 | Linux-PC      | Probe-Logik + MQTT + wpctl + xrandr + psutil-HW     | apt once    |
-| Windows-PC    | Probe-Logik + MQTT + pycaw + LHM + Win32 + NSSM     | winget once |
+| Windows-PC    | Probe-Logik + MQTT + pycaw + LHM + Win32 + shawl    | winget once |
 
 Vor jedem Deploy auf den Kiosk: beide PCs einmal durchlaufen lassen.

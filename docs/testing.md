@@ -38,7 +38,7 @@ pytest -x --pdb                         # bei Fail in PDB-Debugger
 
 - Echtes MQTT-Verhalten (Reconnect, QoS, Retained Messages)
 - Hardware-Edge-Cases (kaputter wpctl-Output, ungewoehnliche LHM-Sensoren)
-- systemd / NSSM Lifecycle
+- systemd / shawl Lifecycle
 
 ---
 
@@ -174,8 +174,9 @@ invasiv — bei Live-Betrieb mit `SKIP_AUDIO=1`.
 mute-toggle, easire, shutdown.exe).
 
 **Wichtig:** LHM braucht **Administrator-Rechte** fuer Hardware-Sensoren.
-Wenn die Probe als Service laeuft, muss der NSSM-Service-User
-entsprechende Rechte haben — sonst kommen leere `temperatures()`/`fans()`.
+Wenn die Probe als Service laeuft, muss der Service-User (Default
+LocalSystem) entsprechende Rechte haben — sonst kommen leere
+`temperatures()`/`fans()`.
 
 ### Manuelle Direkt-Aufrufe
 

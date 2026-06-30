@@ -156,7 +156,7 @@ class App:
 
     def run(self) -> None:
         """Main lifecycle loop. Exits via SIGTERM/SIGKILL under a
-        service-manager (systemd / NSSM), or via KeyboardInterrupt /
+        service-manager (systemd / shawl), or via KeyboardInterrupt /
         SystemExit during interactive use. The outer try/finally
         guarantees a clean stop() in every exit path so no thread or
         socket leaks behind."""
