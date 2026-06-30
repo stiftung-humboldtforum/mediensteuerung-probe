@@ -87,10 +87,11 @@ oder bei Fehler:
 
 ### Windows
 
-- Python 3.13 system-wide (`winget install Python.Python.3.13 --scope machine`)
 - Netzwerk-Zugang zum MQTT-Broker
 - LibreHardwareMonitorLib.dll + HidSharp.dll in `lib/win32/` (im Repo)
-- shawl fuer Service-Betrieb (`winget install mtkennerly.shawl`)
+- **Offline-Install:** Python, pip-Wheels und shawl werden gebündelt von
+  `scripts/prepare-offline.ps1` geladen und von `scripts/install-windows.ps1`
+  **ohne Internet/winget** installiert (siehe [installers/README.md](installers/README.md))
 
 ## Installation
 
@@ -98,8 +99,8 @@ oder bei Fehler:
 # Linux
 pip install -r requirements.lock.txt
 
-# Windows
-pip install -r requirements.lock.windows.txt
+# Windows (manuell; vollautomatischer Offline-Weg s.u. "Windows (shawl, offline)")
+pip install -r requirements.lock.txt
 
 # Dev / Tests
 pip install -r requirements-dev.txt
@@ -201,15 +202,21 @@ journalctl -u humboldt-probe -f
 `Type=notify` mit `WatchdogSec=30s` — gestallter Probe wird automatisch
 neu gestartet.
 
-### Windows (shawl)
+### Windows (shawl, offline)
+
+Vollautomatisch **ohne Internet/winget**: `prepare-offline.ps1` einmal online
+ausfuehren (laedt shawl + Python + Wheels nach `installers/`), danach laeuft die
+Installation komplett offline:
 
 ```powershell
-winget install mtkennerly.shawl
-.\scripts\install-windows.ps1   # Default: srv-control-avm + Certs aus C:\humboldt-probe\
+.\scripts\prepare-offline.ps1   # einmalig, online: Bundle nach installers/ laden
+.\scripts\install-windows.ps1   # offline: shawl + Python + Deps + Service (Default srv-control-avm, Certs aus C:\humboldt-probe\)
 Get-Service HumboldtProbe       # bzw. Start-Service / Stop-Service / Restart-Service
 ```
 
 shawl startet die Probe bei Boot und nach Crash automatisch neu (`--restart`).
+Auf einem Dev-Rechner mit Internet alternativ `winget install mtkennerly.shawl`
++ `pip install -r requirements.lock.txt` von Hand.
 
 ## Operations
 
@@ -265,8 +272,9 @@ Dashboard kann Fleet-Drift erkennen.
 
 ## Testing
 
-Mosquitto fuer Integration-Tests installieren (`apt install mosquitto`
-auf Linux / `winget install EclipseFoundation.Mosquitto` auf Windows),
+Mosquitto fuer Integration-Tests installieren (`apt install mosquitto` auf
+Linux; auf Windows den gebuendelten `installers/mosquitto-*-install-windows-x64.exe`
+aus dem Offline-Bundle ausfuehren -- oder online `winget install EclipseFoundation.Mosquitto`),
 dann:
 
 ```bash

@@ -1,18 +1,26 @@
 #Requires -RunAsAdministrator
 <#
 .SYNOPSIS
-    Installs the Humboldt-Probe as a Windows service via shawl.
+    Installs the Humboldt-Probe as a Windows service via shawl -- fully offline.
 
 .DESCRIPTION
-    Idempotent install / re-install script. Creates a Windows service
-    (via shawl) that runs src/app.py with the configured MQTT broker;
-    shawl captures the wrapped command's stdout/stderr into a rotating
-    log file.
+    Idempotent install / re-install script. Bootstraps the runtime from a local
+    offline bundle (no winget / no internet required) and creates a Windows
+    service (via shawl) that runs src/app.py with the configured MQTT broker;
+    shawl captures the wrapped command's stdout/stderr into a rotating log file.
 
-    Re-running the script tears down the existing service and recreates
-    it (stop -> delete -> recreate -> start) -- shawl bakes its config
-    into the service binPath at creation time, so reconfiguration means
-    recreation, not in-place edits.
+    OFFLINE BUNDLE: run scripts/prepare-offline.ps1 ONCE on a machine with
+    internet to populate installers/ (shawl.exe, the Python installer, the pip
+    wheels). After that this script installs everything WITHOUT internet:
+      - shawl   from installers/shawl.exe  (copied to C:\Program Files\shawl)
+      - Python  from installers/python-3.13.x-amd64.exe (if not already present)
+      - deps    from installers/wheels/    (pip --no-index against requirements.lock.txt)
+    Each step falls back to an already-present tool (shawl on PATH, an existing
+    Python, pre-installed deps), so a connected dev box still works as before.
+
+    Re-running the script tears down the existing service and recreates it
+    (stop -> delete -> recreate -> start) -- shawl bakes its config into the
+    service binPath at creation time, so reconfiguration means recreation.
 
 .PARAMETER InstallPath
     Where the source tree lives. Default: C:\humboldt-probe
@@ -47,9 +55,21 @@
     SecureString. Required for non-system service accounts that need a
     password. Pass via `Read-Host -AsSecureString` or `ConvertTo-SecureString`.
 
+.PARAMETER InstallersDir
+    Offline bundle directory (shawl.exe, python-*.exe, wheels/). Default:
+    <repo>\installers, populated by scripts/prepare-offline.ps1.
+
+.PARAMETER PythonExe
+    Python executable. Default C:\Program Files\Python313\python.exe;
+    auto-installed offline from installers\python-3.13.x-amd64.exe if missing.
+
 .PARAMETER ShawlExe
-    Path to shawl.exe (service wrapper). Default: "shawl" (expected on PATH,
-    e.g. via `winget install mtkennerly.shawl`, scoop, or a bundled copy).
+    shawl.exe path. Default: shawl on PATH if present, otherwise the bundled
+    installers\shawl.exe (installed to C:\Program Files\shawl).
+
+.PARAMETER SkipDeps
+    Skip the offline pip install (use when the dependencies are already
+    installed, e.g. an editable dev checkout).
 
 .EXAMPLE
     .\install-windows.ps1
@@ -72,25 +92,79 @@ param(
     [string]$ServiceName  = "HumboldtProbe",
     [string]$ServiceUser  = "",
     [securestring]$ServicePassword,
+    [string]$InstallersDir = "",
     [string]$PythonExe    = "C:\Program Files\Python313\python.exe",
-    [string]$ShawlExe     = "shawl"
+    [string]$ShawlExe     = "shawl",
+    [switch]$SkipDeps
 )
 
 $ErrorActionPreference = 'Stop'
 
-function Assert-Command($cmd) {
-    if (-not (Get-Command $cmd -ErrorAction SilentlyContinue)) {
-        throw "Required command '$cmd' not found on PATH."
+# --- Resolve repo + offline-bundle paths ----------------------------------
+$repoRoot = Split-Path -Parent $PSScriptRoot
+if (-not $InstallersDir) { $InstallersDir = Join-Path $repoRoot 'installers' }
+$wheelsDir    = Join-Path $InstallersDir 'wheels'
+$requirements = Join-Path $repoRoot 'requirements.lock.txt'
+
+# --- Step 1: shawl (service wrapper) --------------------------------------
+# Prefer shawl on PATH; otherwise install the bundled copy to a stable
+# location (the service binPath must point at a persistent shawl.exe, not the
+# repo checkout). No winget / no download needed when the bundle is present.
+Write-Host "Step 1: Ensuring shawl (service wrapper)..."
+$shawlCmd = Get-Command $ShawlExe -ErrorAction SilentlyContinue
+if ($shawlCmd) {
+    $ShawlExe = $shawlCmd.Source
+    Write-Host "  -> using shawl on PATH: $ShawlExe"
+} else {
+    $bundledShawl = Join-Path $InstallersDir 'shawl.exe'
+    if (-not (Test-Path $bundledShawl)) {
+        throw "shawl not found on PATH and no bundled '$bundledShawl'. Run scripts\prepare-offline.ps1 (online, once) or pass -ShawlExe."
     }
+    $shawlTarget = "C:\Program Files\shawl\shawl.exe"
+    New-Item -ItemType Directory -Force (Split-Path -Parent $shawlTarget) | Out-Null
+    Copy-Item $bundledShawl $shawlTarget -Force
+    $ShawlExe = $shawlTarget
+    Write-Host "  -> installed bundled shawl.exe to $ShawlExe"
 }
 
-# --- Pre-flight checks ----------------------------------------------------
-Assert-Command $ShawlExe
-
+# --- Step 2: Python 3.13 --------------------------------------------------
+# Use an existing Python; otherwise install the bundled offline installer.
+Write-Host "Step 2: Ensuring Python 3.13..."
 if (-not (Test-Path $PythonExe)) {
-    throw "Python executable not found at $PythonExe -- install via 'winget install Python.Python.3.13 --scope machine' or pass -PythonExe."
+    $pyInstaller = Get-ChildItem $InstallersDir -Filter 'python-3.13.*-amd64.exe' -ErrorAction SilentlyContinue |
+        Sort-Object Name -Descending | Select-Object -First 1
+    if (-not $pyInstaller) {
+        throw "Python not found at '$PythonExe' and no bundled 'installers\python-3.13.*-amd64.exe'. Run scripts\prepare-offline.ps1 or pass -PythonExe."
+    }
+    Write-Host "  -> installing $($pyInstaller.Name)..."
+    # InstallAllUsers=1 -> C:\Program Files (matches $PythonExe); PrependPath=1
+    # puts python on the system PATH; skip launcher/tests; keep pip.
+    $pyArgs = '/quiet','InstallAllUsers=1','PrependPath=1','Include_launcher=0','Include_test=0','Include_pip=1','AssociateFiles=0'
+    $proc = Start-Process -FilePath $pyInstaller.FullName -ArgumentList $pyArgs -Wait -PassThru -NoNewWindow
+    if ($proc.ExitCode -ne 0) { throw "Python installer exited $($proc.ExitCode)." }
+    # Refresh PATH so a freshly installed pip/python resolves in this session.
+    $env:Path = [Environment]::GetEnvironmentVariable('Path','Machine') + ';' + [Environment]::GetEnvironmentVariable('Path','User')
+}
+if (-not (Test-Path $PythonExe)) { throw "Python still not found at '$PythonExe' after install." }
+Write-Host "  -> Python: $PythonExe"
+
+# --- Step 3: Python dependencies (offline) --------------------------------
+# Install from the bundled wheels with --no-index so a missing wheel is a hard
+# error instead of a silent PyPI fallback (the offline target cannot reach it).
+Write-Host "Step 3: Installing Python dependencies (offline)..."
+if ($SkipDeps) {
+    Write-Host "  -> -SkipDeps: assuming dependencies already installed."
+} elseif (Test-Path $wheelsDir) {
+    if (-not (Test-Path $requirements)) { throw "requirements.lock.txt not found at '$requirements'." }
+    & $PythonExe -m pip install --no-index --find-links $wheelsDir -r $requirements
+    if ($LASTEXITCODE -ne 0) { throw "offline pip install exited $LASTEXITCODE (wheel missing? re-run prepare-offline.ps1)." }
+    Write-Host "  -> dependencies installed offline from $wheelsDir"
+} else {
+    Write-Host "  -> no bundled wheels at '$wheelsDir'; assuming dependencies already installed."
+    Write-Host "     For a fully offline install run scripts\prepare-offline.ps1 first, or pass -SkipDeps to silence this."
 }
 
+# --- Pre-flight: runtime config -------------------------------------------
 if (-not (Test-Path $InstallPath)) {
     throw "Install path '$InstallPath' does not exist. Copy the source tree there first."
 }
@@ -117,7 +191,7 @@ if ($MqttPort -eq 0) {
     $MqttPort = if ($NoTls) { 1883 } else { 8883 }
 }
 
-# --- Build app.py argument string -----------------------------------------
+# --- Build app.py argument array ------------------------------------------
 $srcPath = Join-Path $InstallPath "src"
 $logPath = Join-Path $InstallPath "probe_rCURRENT.log"
 
@@ -135,7 +209,8 @@ if ($NoTls) {
     $appArgs += "--certfile=$CertFile"
     $appArgs += "--keyfile=$KeyFile"
 }
-# --- Install / re-install service -----------------------------------------
+
+# --- Step 4: Install / re-install the service -----------------------------
 # shawl bakes its configuration into the service binPath at creation time, so
 # "reconfigure" means delete + recreate, not in-place edits. Probe for an
 # existing service and tear it down first.
@@ -144,6 +219,7 @@ if ($NoTls) {
 # command writing to stderr is promoted to a terminating error. sc.exe query
 # writes to stderr when the service is absent, so probe under SilentlyContinue
 # and key off $LASTEXITCODE, then restore the previous preference.
+Write-Host "Step 4: Registering service '$ServiceName'..."
 $serviceExists = $false
 $prevEAP = $ErrorActionPreference
 $ErrorActionPreference = 'SilentlyContinue'
@@ -154,7 +230,7 @@ try {
     $ErrorActionPreference = $prevEAP
 }
 if ($serviceExists) {
-    Write-Host "Service '$ServiceName' exists -- stopping + deleting for recreate..."
+    Write-Host "  -> exists; stopping + deleting for recreate..."
     # shawl has NO stop/remove subcommand -- use native sc.exe. A failed stop on
     # an already-stopped service is harmless; swallow stderr to keep re-run
     # idempotency under PS 5.1's stderr-promotes-to-terminating-error behaviour.
@@ -175,7 +251,6 @@ if ($serviceExists) {
     }
 }
 
-# --- Create the service via shawl -----------------------------------------
 # Build the whole argument vector as an array -- including a LITERAL '--'
 # element -- and splat it, so the '--' separator reaches shawl.exe verbatim (a
 # bare `--` token on the command line would be consumed by PowerShell's parser).
@@ -200,7 +275,6 @@ $shawlArgs = @(
     $PythonExe
 ) + $appArgs
 
-Write-Host "Installing service '$ServiceName'..."
 # shawl writes a success line to stderr; under PS 5.1 + EAP=Stop that would
 # terminate. Probe under SilentlyContinue and key off $LASTEXITCODE instead.
 $prevEAP = $ErrorActionPreference

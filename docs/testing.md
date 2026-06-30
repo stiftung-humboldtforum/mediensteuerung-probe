@@ -79,7 +79,8 @@ Tests skippen automatisch wenn kein Broker erreichbar ist.
 
 ```bash
 # Debian/Ubu:   sudo apt install mosquitto && mosquitto -p 11883 -v
-# Windows:      winget install EclipseFoundation.Mosquitto
+# Windows:      installers\mosquitto-*-install-windows-x64.exe ausfuehren
+#               (aus dem Offline-Bundle: scripts\prepare-offline.ps1), dann
 #               mosquitto -p 11883 -v
 
 pytest -m integration
