@@ -172,3 +172,7 @@ cython_debug/
 # Large + frequently re-versioned; only the README is tracked.
 /installers/*
 !/installers/README.md
+
+# Standalone offline-installer output (bundled binaries + fleet mTLS key).
+# Built by standalone-installer/build-standalone-installer.ps1; treat as a secret.
+standalone-installer/dist/
