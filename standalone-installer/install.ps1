@@ -16,7 +16,7 @@
 #>
 $ErrorActionPreference = 'Stop'
 $here    = $PSScriptRoot
-$target  = 'C:\humboldt-probe'
+$target  = 'C:\HumboldtProbe'
 $service = 'HumboldtProbe'
 
 Write-Host "=== Humboldt-Probe standalone installer ===" -ForegroundColor Cyan
@@ -66,10 +66,14 @@ function Deploy-Dir($Src, $Dst) {
 Deploy-Dir (Join-Path $here 'src') (Join-Path $target 'src')
 Deploy-Dir (Join-Path $here 'lib') (Join-Path $target 'lib')
 
-# --- certs: copy the private key FIRST and harden it IMMEDIATELY, to minimise the
-#     window in which the fleet mTLS key sits with inherited (broad) ACLs. SIDs are
-#     German-safe: *S-1-5-18 = LocalSystem, *S-1-5-32-544 = Administrators. Fail closed. ---
-$key = Join-Path $target 'client_key.pem'
+# --- certs: deploy to $target\certs\ (same layout as the kiosk). Copy the private
+#     key FIRST and harden it IMMEDIATELY, to minimise the window in which the fleet
+#     mTLS key sits with inherited (broad) ACLs. SIDs are German-safe: *S-1-5-18 =
+#     LocalSystem, *S-1-5-32-544 = Administrators. Fail closed. (install-windows.ps1
+#     re-hardens too; both are idempotent.) ---
+$certDir = Join-Path $target 'certs'
+New-Item -ItemType Directory -Force $certDir | Out-Null
+$key = Join-Path $certDir 'client_key.pem'
 Copy-Item (Join-Path $here 'certs\client_key.pem') $key -Force
 $prevEAP = $ErrorActionPreference
 $ErrorActionPreference = 'SilentlyContinue'
@@ -82,8 +86,8 @@ if ($ic -ne 0) {
 Write-Host "client_key.pem ACL hardened (LocalSystem + Administrators only)." -ForegroundColor Green
 
 # public certs + config (not secret).
-Copy-Item (Join-Path $here 'certs\ca_certificate.pem')     (Join-Path $target 'ca_certificate.pem')     -Force
-Copy-Item (Join-Path $here 'certs\client_certificate.pem') (Join-Path $target 'client_certificate.pem') -Force
+Copy-Item (Join-Path $here 'certs\ca_certificate.pem')     (Join-Path $certDir 'ca_certificate.pem')     -Force
+Copy-Item (Join-Path $here 'certs\client_certificate.pem') (Join-Path $certDir 'client_certificate.pem') -Force
 if (-not (Test-Path (Join-Path $target 'userconfig.txt'))) {
     Copy-Item (Join-Path $here 'userconfig.example.txt') (Join-Path $target 'userconfig.txt') -Force
 }

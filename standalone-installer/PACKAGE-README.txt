@@ -17,7 +17,7 @@ USAGE
 
 WHAT IT DOES
 ------------
-- deploys the probe to C:\humboldt-probe (src, lib, certs; key ACL-hardened)
+- deploys the probe to C:\HumboldtProbe (src, lib, certs; key ACL-hardened)
 - installs Python 3.13 (from the bundled installer, if not already present)
 - installs the probe's pip dependencies offline (from the bundled wheels)
 - registers "HumboldtProbe" as a Windows service via shawl (auto-start,
@@ -26,7 +26,7 @@ WHAT IT DOES
 AFTERWARDS
 ----------
   Get-Service HumboldtProbe
-  Get-Content C:\humboldt-probe\probe_rCURRENT.log -Tail 50
+  Get-Content C:\HumboldtProbe\probe_rCURRENT.log -Tail 50
 
 SECURITY
 --------

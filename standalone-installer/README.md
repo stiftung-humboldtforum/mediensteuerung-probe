@@ -25,12 +25,12 @@ if any input is missing or the bundled wheels are stale vs `requirements.lock.tx
 2. Optional: edit `config.txt` for a different MQTT broker (default `srv-control-avm:8883`).
 3. Run `install.cmd` as administrator (self-elevates on double-click).
 
-Deploys the probe to `C:\humboldt-probe`, then installs Python + deps + the shawl
+Deploys the probe to `C:\HumboldtProbe`, then installs Python + deps + the shawl
 `HumboldtProbe` service (auto-start, LocalSystem) — all offline.
 
 ## How it works (no duplicated logic)
 
-`install.cmd` → `install.ps1` deploys the payload to `C:\humboldt-probe`, hardens
+`install.cmd` → `install.ps1` deploys the payload to `C:\HumboldtProbe`, hardens
 the mTLS key, then hands off to the probe's own
 [`scripts/install-windows.ps1`](../scripts/install-windows.ps1) (reused verbatim)
 for Python + deps + the shawl service. Deploy is done in the wrapper so

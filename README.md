@@ -204,13 +204,18 @@ neu gestartet.
 
 ### Windows (shawl, offline)
 
-Vollautomatisch **ohne Internet/winget**: `prepare-offline.ps1` einmal online
-ausfuehren (laedt shawl + Python + Wheels nach `installers/`), danach laeuft die
-Installation komplett offline:
+Installiert nach `C:\HumboldtProbe` (gleiches Ziel wie der Kiosk). Zwei Offline-Wege,
+**ohne Internet/winget**:
+
+**Standalone-Installer** (beliebiger Rechner, "einfach installieren"): Paket einmal
+bauen, auf den Zielrechner kopieren, `install.cmd` als Admin ausfuehren. Siehe
+[standalone-installer/](standalone-installer/README.md).
+
+**Aus einem Checkout** (Dev / dieses Repo):
 
 ```powershell
 .\scripts\prepare-offline.ps1   # einmalig, online: Bundle nach installers/ laden
-.\scripts\install-windows.ps1   # offline: shawl + Python + Deps + Service (Default srv-control-avm, Certs aus C:\humboldt-probe\)
+.\scripts\install-windows.ps1   # offline: shawl + Python + Deps + Service (Default srv-control-avm, Certs aus C:\HumboldtProbe\certs\)
 Get-Service HumboldtProbe       # bzw. Start-Service / Stop-Service / Restart-Service
 ```
 
@@ -239,7 +244,7 @@ mTLS-Zertifikate haben begrenzte Lifetime. Vor Ablauf:
    - Linux: `sudo systemctl restart humboldt-probe`
    - Windows: `Restart-Service HumboldtProbe`
 3. Verify: `journalctl -u humboldt-probe -n 50` (Linux) bzw.
-   `C:\humboldt-probe\probe_rCURRENT.log` (Windows).
+   `C:\HumboldtProbe\probe_rCURRENT.log` (Windows).
 
 ### Update / Rollback
 

@@ -18,7 +18,7 @@
           installers/  python-*.exe shawl.exe wheels/     (probe deps ONLY)
           scripts/install-windows.ps1                     (verbatim copy)
 
-    install.ps1 deploys the payload to C:\humboldt-probe, hardens the key, then
+    install.ps1 deploys the payload to C:\HumboldtProbe, hardens the key, then
     calls scripts/install-windows.ps1 (the probe's own service installer) which
     installs Python + deps + the shawl service offline. install-windows.ps1 is
     reused verbatim -- no duplicated service logic.

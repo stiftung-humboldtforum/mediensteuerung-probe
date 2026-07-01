@@ -23,7 +23,7 @@
     service binPath at creation time, so reconfiguration means recreation.
 
 .PARAMETER InstallPath
-    Where the source tree lives. Default: C:\humboldt-probe
+    Where the probe is installed. Default: C:\HumboldtProbe (same as the kiosk).
 
 .PARAMETER ConfigFile
     Path to userconfig.txt. Default: <InstallPath>\userconfig.txt
@@ -35,8 +35,8 @@
     MQTT port. Default: 8883 (1883 wenn -NoTls).
 
 .PARAMETER CaCertificate, CertFile, KeyFile
-    TLS material. Default: ca_certificate.pem / client_certificate.pem /
-    client_key.pem im -InstallPath. Override per Param.
+    TLS material. Default: <InstallPath>\certs\{ca_certificate,client_certificate,
+    client_key}.pem (same layout as the kiosk). Override per Param.
 
 .PARAMETER NoTls
     Schaltet TLS ab. Nur fuer lokales Testing -- siehe Banner-Warnung
@@ -73,13 +73,13 @@
 
 .EXAMPLE
     .\install-windows.ps1
-    # Default: -MqttHostname srv-control-avm + Certs aus C:\humboldt-probe\
+    # Default: -MqttHostname srv-control-avm + Certs aus C:\HumboldtProbe\certs\
 
 .EXAMPLE
     .\install-windows.ps1 -MqttHostname 127.0.0.1 -NoTls
 #>
 param(
-    [string]$InstallPath  = "C:\humboldt-probe",
+    [string]$InstallPath  = "C:\HumboldtProbe",
     [string]$ConfigFile   = "",
     [string]$MqttHostname = "srv-control-avm",
     [int]   $MqttPort     = 0,
@@ -177,14 +177,23 @@ if (-not (Test-Path $ConfigFile)) {
 }
 
 if (-not $NoTls) {
-    if (-not $CaCertificate) { $CaCertificate = Join-Path $InstallPath "ca_certificate.pem" }
-    if (-not $CertFile)      { $CertFile      = Join-Path $InstallPath "client_certificate.pem" }
-    if (-not $KeyFile)       { $KeyFile       = Join-Path $InstallPath "client_key.pem" }
+    if (-not $CaCertificate) { $CaCertificate = Join-Path $InstallPath "certs\ca_certificate.pem" }
+    if (-not $CertFile)      { $CertFile      = Join-Path $InstallPath "certs\client_certificate.pem" }
+    if (-not $KeyFile)       { $KeyFile       = Join-Path $InstallPath "certs\client_key.pem" }
     foreach ($f in @($CaCertificate, $CertFile, $KeyFile)) {
         if (-not (Test-Path $f)) {
             throw "TLS material missing or not found: '$f'. Pass -CaCertificate / -CertFile / -KeyFile, or use -NoTls."
         }
     }
+    # Harden the fleet mTLS private key: only LocalSystem + Administrators may read
+    # it (a leak is fleet-wide). Well-known SIDs are German-safe: *S-1-5-18 =
+    # LocalSystem, *S-1-5-32-544 = Administrators. Fail closed; guarded for PS 5.1.
+    $prevEAP = $ErrorActionPreference
+    $ErrorActionPreference = 'SilentlyContinue'
+    try { & icacls $KeyFile /inheritance:r /grant:r '*S-1-5-18:R' '*S-1-5-32-544:R' 2>&1 | Out-Null; $ic = $LASTEXITCODE }
+    finally { $ErrorActionPreference = $prevEAP }
+    if ($ic -ne 0) { throw "icacls hardening of $KeyFile failed ($ic) -- refusing to continue with the fleet mTLS key readable." }
+    Write-Host "  -> client_key.pem ACL hardened (LocalSystem + Administrators only)."
 }
 
 if ($MqttPort -eq 0) {
