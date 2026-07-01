@@ -177,3 +177,8 @@ if ($Zip) {
 
 Write-Host ""
 Write-Host "Copy the folder (or zip) to the target machine, then run install.cmd as admin." -f Green
+
+# robocopy sets $LASTEXITCODE to 1 (="files copied", a SUCCESS) on the last mirror,
+# which would otherwise leak out as a non-zero script exit and read as a build
+# failure to CI / callers. All real failures above exit explicitly, so success here.
+exit 0
