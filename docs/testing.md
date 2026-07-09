@@ -21,7 +21,7 @@ noetig.
 | `tests/test_misc.py`    | Config-Parser, Payload-Validation, JSON-Envelope          |
 | `tests/test_methods.py` | Sensor-Funktionen (Linux + Common), Subprocess-Timeouts   |
 | `tests/test_probe.py`   | `Probe`-Klasse, MQTT-Callbacks, Thread-Lifecycle          |
-| `tests/test_app.py`     | `App.fqdn`-Caching, `--no_tls`-Banner, CLI-Validation     |
+| `tests/test_app.py`     | `App.fqdn`-Caching, `--client_id`/`PROBE_CLIENT_ID`-Override + Precedence, `--no_tls`-Banner, CLI-Validation |
 
 ```bash
 pip install -r requirements-dev.txt
