@@ -21,16 +21,21 @@ $service = 'HumboldtProbe'
 
 Write-Host "=== Humboldt-Probe standalone installer ===" -ForegroundColor Cyan
 
-# --- optional config.txt: MQTT_HOST / MQTT_PORT (default srv-control-avm:8883) ---
+# --- optional config.txt: MQTT_HOST / MQTT_PORT / CLIENT_ID (default srv-control-avm:8883, identity=getfqdn) ---
 $mqttHost = 'srv-control-avm'
 $mqttPort = '8883'
+$clientId = ''
 $cfg = Join-Path $here 'config.txt'
 if (Test-Path $cfg) {
     foreach ($line in Get-Content $cfg) {
         $t = $line.Trim()
         if (-not $t -or $t.StartsWith('#')) { continue }
-        if ($t -match '^(MQTT_HOST|MQTT_PORT)\s*=\s*(.+?)\s*$') {
-            if ($Matches[1] -eq 'MQTT_HOST') { $mqttHost = $Matches[2].Trim() } else { $mqttPort = $Matches[2].Trim() }
+        if ($t -match '^(MQTT_HOST|MQTT_PORT|CLIENT_ID)\s*=\s*(.+?)\s*$') {
+            switch ($Matches[1]) {
+                'MQTT_HOST' { $mqttHost = $Matches[2].Trim() }
+                'MQTT_PORT' { $mqttPort = $Matches[2].Trim() }
+                'CLIENT_ID' { $clientId = $Matches[2].Trim() }
+            }
         }
     }
 }
@@ -98,5 +103,8 @@ if (-not (Test-Path $svcInstaller)) {
     Write-Host "ERROR: $svcInstaller not found -- the package is incomplete." -ForegroundColor Red
     exit 1
 }
-& $svcInstaller -InstallPath $target -MqttHostname $mqttHost -MqttPort $mqttPort
+# Pass -ClientId only when config.txt set one; empty = probe falls back to getfqdn().
+$svcArgs = @{ InstallPath = $target; MqttHostname = $mqttHost; MqttPort = $mqttPort }
+if ($clientId) { $svcArgs['ClientId'] = $clientId }
+& $svcInstaller @svcArgs
 exit $LASTEXITCODE

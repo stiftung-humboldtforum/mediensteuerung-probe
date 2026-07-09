@@ -40,6 +40,11 @@ WorkingDirectory=/opt/humboldt-probe
 Environment=DISPLAY=:0
 Environment=XDG_RUNTIME_DIR=/run/user/1000
 
+# Optional: eine explizite MQTT-Identitaet pinnen, wenn socket.getfqdn() auf
+# dieser Box den falschen/baren Namen liefert (Multi-NIC / kein DNS-Suffix).
+# Dazu eine weitere Zeile in ExecStart aufnehmen, z.B.:
+#     --client_id=<name>.<suffix> \
+# Precedence: --client_id > PROBE_CLIENT_ID (userconfig.txt) > socket.getfqdn().
 ExecStart=/usr/bin/python3 src/app.py \
     --config_file=/etc/humboldt-probe/userconfig.txt \
     --mqtt_hostname=srv-control-avm \

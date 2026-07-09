@@ -89,6 +89,10 @@ param(
     [switch]$NoTls,
     [ValidateSet('CRITICAL','ERROR','WARNING','INFO','DEBUG')]
     [string]$LogLevel     = "INFO",
+    # Explicit MQTT identity (client_id + topic prefix). Empty = let the
+    # probe fall back to socket.getfqdn(). Set on multi-NIC / no-DNS-suffix
+    # boxes where getfqdn() returns the bare hostname.
+    [string]$ClientId     = "",
     [string]$ServiceName  = "HumboldtProbe",
     [string]$ServiceUser  = "",
     [securestring]$ServicePassword,
@@ -217,6 +221,11 @@ if ($NoTls) {
     $appArgs += "--ca_certificate=$CaCertificate"
     $appArgs += "--certfile=$CertFile"
     $appArgs += "--keyfile=$KeyFile"
+}
+# Only emit --client_id when a value was supplied; an empty value would
+# pin an empty identity instead of falling back to socket.getfqdn().
+if ($ClientId) {
+    $appArgs += "--client_id=$ClientId"
 }
 
 # --- Step 4: Install / re-install the service -----------------------------

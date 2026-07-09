@@ -44,6 +44,13 @@ Zwei Praefixe:
 - `probe/<fqdn>/...`   — outbound (Sensor-Daten + Command-Antworten)
 - `manager/<fqdn>/...` — inbound (Kommandos vom Manager)
 
+`<fqdn>` ist die MQTT-Identitaet der Probe (zugleich der MQTT-`client_id`):
+per Default `socket.getfqdn()`, ueberschreibbar via `--client_id` bzw.
+`PROBE_CLIENT_ID` (siehe [CLI-Optionen](#cli-optionen) / [Configuration](#configuration)).
+Der Manager adressiert das Geraet exakt unter diesem String — auf Boxen wo
+`getfqdn()` den baren Hostnamen liefert (Multi-NIC / kein DNS-Suffix) muss die
+Identitaet explizit gepinnt werden, sonst ist das Geraet unsichtbar.
+
 ### Outbound
 
 | Topic                       | Retained | QoS | Payload                                                              |
@@ -141,6 +148,7 @@ python src/app.py \
 | `--keyfile`        | `client_key.pem`         | Client-Key fuer mTLS                    |
 | `--no_tls`         | false                    | TLS aus (nur lokales Testen)            |
 | `--loglevel`       | INFO                     | CRITICAL/ERROR/WARNING/INFO/DEBUG       |
+| `--client_id`      | (`socket.getfqdn()`)     | Explizite MQTT-Identitaet (client_id + Topic-Prefix). Ueberschreibt getfqdn(). Auch via `PROBE_CLIENT_ID`. Precedence: CLI > config > getfqdn(). |
 
 ### Env-Variablen
 
@@ -159,6 +167,12 @@ PROBE_CAPABILITIES="wake,shutdown,reboot,mute,unmute"
 
 `PROBE_METHODS` — Sensoren die alle 5s gepollt werden.
 `PROBE_CAPABILITIES` — Kommandos die der Manager senden darf.
+`PROBE_CLIENT_ID` — optional, explizite MQTT-Identitaet (client_id +
+Topic-Prefix `probe/<id>/...`). Nur setzen wenn `socket.getfqdn()` auf der
+Box den falschen/baren Namen liefert (Multi-NIC / kein DNS-Suffix). Muss der
+vom Manager erwarteten FQDN entsprechen; ungueltige Werte (Whitespace oder
+`/ + #`) werden ignoriert → Fallback auf `getfqdn()`. Precedence:
+`--client_id` (CLI) > `PROBE_CLIENT_ID` (hier) > `socket.getfqdn()`.
 
 ### PROBE_METHODS
 

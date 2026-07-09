@@ -71,6 +71,16 @@ def test_get_config(tmp_path):
     assert config['PROBE_CAPABILITIES'] == 'shutdown,reboot'
 
 
+def test_get_config_parses_client_id(tmp_path):
+    """PROBE_CLIENT_ID needs no parser change (get_config is generic
+    KEY=value); confirm it round-trips so main() can read it for the
+    identity override."""
+    config_file = tmp_path / 'userconfig.txt'
+    config_file.write_text('PROBE_METHODS="ping"\nPROBE_CLIENT_ID="kosmo-cm-02.kosmo"')
+    config = get_config(str(config_file))
+    assert config['PROBE_CLIENT_ID'] == 'kosmo-cm-02.kosmo'
+
+
 def test_get_config_missing_file():
     config = get_config('/nonexistent/path/config.txt')
     assert config == {}
