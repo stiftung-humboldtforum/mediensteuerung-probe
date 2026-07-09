@@ -56,7 +56,7 @@ Linux-CI nie ausfuehrbar.
 
 ## 3. Integration-Tests
 
-`tests/test_integration.py`: 11 Tests die echte MQTT-Roundtrips
+`tests/test_integration.py`: 9 Tests die echte MQTT-Roundtrips
 verifizieren — Probe-Subprocess gegen externen Mosquitto.
 
 | Test                                                        | Verifiziert                                                   |
@@ -69,9 +69,7 @@ verifizieren — Probe-Subprocess gegen externen Mosquitto.
 | `test_command_blocked_returns_method_not_allowed`           | Capability-Gate: shutdown abgewiesen                          |
 | `test_capability_gate_blocks_module_attribute`              | `os`-Attack-Pfad abgewiesen                                   |
 | `test_whitelist_gate_blocks_module_attribute`               | `os` in capabilities → "Unknown method"                       |
-| `test_last_will_published_on_unclean_disconnect`            | SIGKILL → connected="0" via Will                              |
 | `test_probe_exponential_backoff_on_dead_broker`             | Reconnect-Backoff 5s→10s→20s aus App-Logs                     |
-| `test_probe_connects_via_tls`                               | mTLS-Handshake mit ephemerer self-signed CA                   |
 
 Tests skippen automatisch wenn kein Broker erreichbar ist.
 

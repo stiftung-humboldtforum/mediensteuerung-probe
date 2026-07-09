@@ -6,7 +6,7 @@ Kommandos entgegen.
 
 ## Features
 
-- MQTT-Client (TLS / mTLS optional, Last-Will, retained Status-Topics)
+- MQTT-Client (TLS / mTLS optional, retained Status-Topics)
 - Cross-Platform: Linux + Windows mit plattform-spezifischen Sensoren
 - Hardware-Monitoring: CPU/GPU-Temperaturen + Lueftern via psutil (Linux)
   bzw. LibreHardwareMonitor (Windows)
@@ -243,8 +243,7 @@ Auf einem Dev-Rechner mit Internet alternativ `winget install mtkennerly.shawl`
 
 | Topic                    | Zweck                                                |
 | ------------------------ | ---------------------------------------------------- |
-| `probe/<fqdn>/connected` | `"1"` online, `"0"` Last-Will. retained.             |
-| `probe/<fqdn>/version`   | Probe-Software-Version (z.B. `0.2.0`). retained.     |
+| `probe/<fqdn>/connected` | `"1"` online. Kein `"0"`/Last-Will — Manager erkennt offline via Ping-Timeout. retained. |
 | `probe/<fqdn>/capabilities` | CSV der unterstuetzten Kommandos. retained.       |
 | `probe/<fqdn>/boot_time` | Unix-epoch Boot. retained.                            |
 | `probe/<fqdn>/errors`    | Status-Aggregation pro Sensor (alle 5s).             |
@@ -272,8 +271,10 @@ git -C /opt/humboldt-probe checkout <previous-tag>
 sudo systemctl restart humboldt-probe
 ```
 
-`probe/<fqdn>/version` zeigt nach Restart die neue Version — Manager-
-Dashboard kann Fleet-Drift erkennen.
+Deployten Stand pruefen: `git -C /opt/humboldt-probe describe --tags`
+(Linux) bzw. `git describe --tags` im Install-Verzeichnis. Ein
+`probe/<fqdn>/version`-Topic existiert nicht (Publish + `misc.VERSION`
+wurden bewusst entfernt — der Manager kennt kein version-Feld).
 
 ### Troubleshooting
 
