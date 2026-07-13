@@ -10,8 +10,8 @@
 
     Auszufuehren NACH Deploy auf der Ziel-Hardware. WICHTIG:
     LibreHardwareMonitor braucht **Administrator-Rechte** fuer voll-
-    staendige Sensor-Listen — im NSSM-Service-Account entsprechend
-    setzen.
+    staendige Sensor-Listen — im Service-Account (Default LocalSystem)
+    entsprechend setzen.
 
 .PARAMETER SkipAudio
     Ueberspringt den Audio-Mute-Toggle-Test (fuer Live-Betrieb).

@@ -43,7 +43,7 @@ def test_probe_unknown_capabilities_logged(caplog):
 def test_probe_version_not_published_on_connect():
     """No probe/<fqdn>/version publish — Manager has no `_state['version']`
     key, so the topic would only trigger Manager-side exception logs.
-    Version info stays internal (misc.VERSION) for log output."""
+    (The dead misc.VERSION constant was removed along with the publish.)"""
     probe = _make_probe()
     probe.on_connect(probe.client, None, flags=Mock(), reason_code=0)
     publish_calls = probe.client.publish.call_args_list

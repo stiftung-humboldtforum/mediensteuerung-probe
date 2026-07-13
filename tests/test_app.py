@@ -52,6 +52,65 @@ def test_refresh_fqdn_raises_on_change():
     assert app.fqdn == 'old.test'
 
 
+# --- Explicit identity override (--client_id / PROBE_CLIENT_ID) ------------
+
+def test_explicit_client_id_overrides_getfqdn():
+    """A valid explicit client_id pins identity and must NOT consult DNS."""
+    with patch('app.socket.getfqdn', return_value='dns.fallback') as mock_getfqdn:
+        app = _make_app(client_id='kosmo-cm-02.kosmo')
+    assert app.fqdn == 'kosmo-cm-02.kosmo'
+    assert app._identity_pinned is True
+    assert mock_getfqdn.call_count == 0
+
+
+def test_client_id_unset_falls_back_to_getfqdn():
+    """No override -> historic behavior: identity from socket.getfqdn()."""
+    with patch('app.socket.getfqdn', return_value='host.dotted.fqdn'):
+        app = _make_app(client_id=None)
+    assert app.fqdn == 'host.dotted.fqdn'
+    assert app._identity_pinned is False
+
+
+def test_invalid_client_id_warns_and_falls_back(caplog):
+    """A metachar/whitespace-CONTAINING override warns loudly and falls
+    back to getfqdn rather than pinning a broken identity. The warning is
+    load-bearing: without it a misconfigured PROBE_CLIENT_ID silently
+    degrades to the bare-hostname identity (device invisible to manager)."""
+    for bad in ('bad/id', 'has space', 'wild+card', 'hash#tag'):
+        caplog.clear()
+        with caplog.at_level(logging.WARNING):
+            with patch('app.socket.getfqdn', return_value='dns.fallback'):
+                app = _make_app(client_id=bad)
+        assert app.fqdn == 'dns.fallback'
+        assert app._identity_pinned is False
+        assert any('Ignoring invalid explicit MQTT identity' in r.getMessage()
+                   for r in caplog.records), f'no warning for {bad!r}'
+
+
+def test_empty_client_id_treated_as_unset_without_warning(caplog):
+    """Empty / whitespace-only means 'not set': silent getfqdn fallback,
+    deliberately NO warning (an absent override is not a misconfiguration)."""
+    for empty in ('', '   '):
+        caplog.clear()
+        with caplog.at_level(logging.WARNING):
+            with patch('app.socket.getfqdn', return_value='dns.fallback'):
+                app = _make_app(client_id=empty)
+        assert app.fqdn == 'dns.fallback'
+        assert app._identity_pinned is False
+        assert not any('MQTT identity' in r.getMessage() for r in caplog.records)
+
+
+def test_refresh_fqdn_noop_when_client_id_pinned():
+    """With a pinned identity, _refresh_fqdn must be inert — otherwise a
+    differing socket.getfqdn() would raise FqdnChanged and the run-loop
+    would overwrite the override (the exact multi-NIC bug this fixes)."""
+    with patch('app.socket.getfqdn', return_value='old.dns'):
+        app = _make_app(client_id='pinned.identity')
+    with patch('app.socket.getfqdn', return_value='new.dns'):
+        app._refresh_fqdn()  # must NOT raise
+    assert app.fqdn == 'pinned.identity'
+
+
 # --- CLI / no_tls banner ---------------------------------------------------
 
 def test_no_tls_banner_localhost(caplog):
@@ -107,6 +166,70 @@ def test_no_tls_remote_override_allows(caplog):
     assert any('NO AUTH, NO ENCRYPTION' in m for m in messages)
     assert result.exit_code == 0
     run.assert_called_once()
+
+
+# --- Identity precedence at the CLI/config boundary ------------------------
+
+def test_cli_client_id_beats_config_key(tmp_path):
+    """--client_id (CLI) wins over PROBE_CLIENT_ID (config key)."""
+    cfg = tmp_path / 'userconfig.txt'
+    cfg.write_text('PROBE_METHODS="ping"\nPROBE_CAPABILITIES="ping"\n'
+                   'PROBE_CLIENT_ID="from-config"\n')
+    runner = CliRunner()
+    with patch('app.App') as FakeApp:
+        runner.invoke(main, [
+            '--config_file', str(cfg),
+            '--mqtt_hostname', '127.0.0.1', '--no_tls',
+            '--client_id', 'from-cli',
+        ])
+    assert FakeApp.call_args.kwargs.get('client_id') == 'from-cli'
+
+
+def test_config_client_id_used_when_no_cli_flag(tmp_path):
+    """With no --client_id, PROBE_CLIENT_ID from the config file is used."""
+    cfg = tmp_path / 'userconfig.txt'
+    cfg.write_text('PROBE_METHODS="ping"\nPROBE_CAPABILITIES="ping"\n'
+                   'PROBE_CLIENT_ID="from-config"\n')
+    runner = CliRunner()
+    with patch('app.App') as FakeApp:
+        runner.invoke(main, [
+            '--config_file', str(cfg),
+            '--mqtt_hostname', '127.0.0.1', '--no_tls',
+        ])
+    assert FakeApp.call_args.kwargs.get('client_id') == 'from-config'
+
+
+def test_unusable_cli_client_id_falls_through_to_config(tmp_path):
+    """An unusable CLI value (empty or metachar-invalid) must NOT shadow a
+    valid PROBE_CLIENT_ID — the precedence chain is a usability fallback,
+    not a raw is-None check. Regression: `--client_id ""` used to silently
+    demote the config pin to getfqdn()."""
+    cfg = tmp_path / 'userconfig.txt'
+    cfg.write_text('PROBE_METHODS="ping"\nPROBE_CAPABILITIES="ping"\n'
+                   'PROBE_CLIENT_ID="from-config"\n')
+    runner = CliRunner()
+    for unusable in ('', '   ', 'bad/id'):
+        with patch('app.App') as FakeApp:
+            runner.invoke(main, [
+                '--config_file', str(cfg),
+                '--mqtt_hostname', '127.0.0.1', '--no_tls',
+                '--client_id', unusable,
+            ])
+        assert FakeApp.call_args.kwargs.get('client_id') == 'from-config', \
+            f'CLI {unusable!r} shadowed the config identity'
+
+
+def test_no_identity_anywhere_passes_none(tmp_path):
+    """No CLI flag and no config key -> client_id=None (getfqdn path)."""
+    cfg = tmp_path / 'userconfig.txt'
+    cfg.write_text('PROBE_METHODS="ping"\nPROBE_CAPABILITIES="ping"\n')
+    runner = CliRunner()
+    with patch('app.App') as FakeApp:
+        runner.invoke(main, [
+            '--config_file', str(cfg),
+            '--mqtt_hostname', '127.0.0.1', '--no_tls',
+        ])
+    assert FakeApp.call_args.kwargs.get('client_id') is None
 
 
 # --- Lifecycle / cleanup --------------------------------------------------

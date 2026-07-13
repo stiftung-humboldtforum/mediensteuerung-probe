@@ -43,6 +43,34 @@ class FqdnChanged(RuntimeError):
         self.new_fqdn = new_fqdn
 
 
+# MQTT topic levels forbid '/', '+', '#' and NUL; the identity string is
+# interpolated into both the client_id and every topic segment
+# (probe/<id>/..., manager/<id>/+), so it must contain none of those and no
+# whitespace. An explicit override that violates this is treated as absent
+# (warn + fall back to socket.getfqdn()) rather than fatal — a bad override
+# must never take the probe offline.
+_CLIENT_ID_FORBIDDEN = frozenset('/+#\x00 \t\r\n')
+
+
+def _sanitize_client_id(value: Optional[str]) -> Optional[str]:
+    """Validate an explicit MQTT identity override. Returns the trimmed
+    value if usable, or None to signal 'no usable override' (caller falls
+    back to socket.getfqdn()). None or empty/whitespace input -> None
+    (no override). A value with forbidden characters -> warn + None."""
+    if value is None:
+        return None
+    cleaned = value.strip()
+    if not cleaned:
+        return None
+    if any(ch in _CLIENT_ID_FORBIDDEN for ch in cleaned):
+        logger.warning(
+            'Ignoring invalid explicit MQTT identity %r: contains whitespace '
+            'or an MQTT topic metacharacter (/ + #). Falling back to '
+            'socket.getfqdn().', value)
+        return None
+    return cleaned
+
+
 class App:
     """Outer lifecycle: setup MQTT-Client + Probe-Thread, connect, then
     sit in a watchdog-pinging loop while the Probe runs. On disconnect
@@ -70,6 +98,7 @@ class App:
         keyfile: Optional[str],
         no_tls: bool,
         notify,  # sd_notify.Notifier | None
+        client_id: Optional[str] = None,
     ) -> None:
         self.mqtt_hostname = mqtt_hostname
         self.mqtt_port = mqtt_port
@@ -80,7 +109,14 @@ class App:
         self.no_tls = no_tls
         self.notify = notify
         self.notify_enabled = notify.enabled() if notify is not None else False
-        self._fqdn = socket.getfqdn()
+        # Identity: a valid explicit client_id pins the MQTT identity
+        # (client_id + topic prefix) deterministically; otherwise fall back
+        # to socket.getfqdn() (historic behavior). A pinned identity also
+        # disables the runtime re-resolution in _refresh_fqdn() (see there),
+        # so it never gets overwritten by a differing DNS lookup.
+        pinned = _sanitize_client_id(client_id)
+        self._identity_pinned = pinned is not None
+        self._fqdn = pinned if pinned is not None else socket.getfqdn()
 
     @property
     def fqdn(self) -> str:
@@ -100,6 +136,14 @@ class App:
         falls fehlschlaegt — kein Verlust der Identity-Konsistenz fuer
         das (noch laufende) alte Probe-Objekt.
         """
+        # A pinned explicit identity is deterministic and must never change
+        # at runtime. Skipping the re-resolve is essential: socket.getfqdn()
+        # would (by design, on the multi-NIC boxes this override exists for)
+        # differ from the pinned value, raise FqdnChanged, and make the
+        # run-loop overwrite the override with the DNS value — silently
+        # defeating the pin and flapping the client on every reconnect.
+        if self._identity_pinned:
+            return
         current = socket.getfqdn()
         if current != self._fqdn:
             raise FqdnChanged(f'FQDN changed: {self._fqdn} → {current}', current)
@@ -162,7 +206,7 @@ class App:
 
     def run(self) -> None:
         """Main lifecycle loop. Exits via SIGTERM/SIGKILL under a
-        service-manager (systemd / NSSM), or via KeyboardInterrupt /
+        service-manager (systemd / shawl), or via KeyboardInterrupt /
         SystemExit during interactive use. The outer try/finally
         guarantees a clean stop() in every exit path so no thread or
         socket leaks behind."""
@@ -299,6 +343,13 @@ class App:
               help='Disable TLS — local testing only. Refuses to start against a non-localhost broker unless PROBE_ALLOW_INSECURE_REMOTE=1 is set.')
 @click.option('--loglevel', type=click.Choice(['CRITICAL', 'ERROR', 'WARNING', 'INFO', 'DEBUG'], case_sensitive=False), default='INFO',
               help='Python logging level.')
+@click.option('--client_id', type=str, default=None,
+              help='Explicit MQTT identity, used as both the client_id and the '
+                   'topic prefix (probe/<id>/... , manager/<id>/+). Overrides '
+                   'socket.getfqdn() — set this on multi-NIC / no-DNS-suffix '
+                   'boxes where getfqdn() returns the bare hostname. Also '
+                   'settable via a PROBE_CLIENT_ID key in userconfig.txt; '
+                   'precedence: CLI > config > socket.getfqdn().')
 def main(
         config_file,
         mqtt_hostname,
@@ -307,7 +358,8 @@ def main(
         certfile,
         keyfile,
         no_tls,
-        loglevel):
+        loglevel,
+        client_id):
 
     logging.basicConfig(
         level=getattr(logging, loglevel.upper(), logging.WARNING),
@@ -354,6 +406,17 @@ def main(
     config = get_config(config_file)
     logger.info('Config: %s', config)
 
+    # Identity precedence: --client_id (CLI) > PROBE_CLIENT_ID (config key)
+    # > socket.getfqdn() (the App fallback when this is None). The chain is
+    # a USABILITY fallback: an unusable CLI value (empty, whitespace, MQTT
+    # metachars — _sanitize_client_id warns on the metachar case) must fall
+    # THROUGH to the config key, not shadow it. Keying off raw None-ness
+    # here would let `--client_id ""` silently demote a valid config pin to
+    # the getfqdn() fallback — the exact silent-misidentity failure this
+    # feature exists to prevent. App re-validates whatever wins.
+    identity = client_id if _sanitize_client_id(client_id) is not None \
+        else config.get('PROBE_CLIENT_ID')
+
     app = App(config,
               mqtt_hostname,
               mqtt_port,
@@ -361,7 +424,8 @@ def main(
               certfile,
               keyfile,
               no_tls,
-              notify)
+              notify,
+              client_id=identity)
     app.run()
 
 

@@ -21,7 +21,7 @@ noetig.
 | `tests/test_misc.py`    | Config-Parser, Payload-Validation, JSON-Envelope          |
 | `tests/test_methods.py` | Sensor-Funktionen (Linux + Common), Subprocess-Timeouts   |
 | `tests/test_probe.py`   | `Probe`-Klasse, MQTT-Callbacks, Thread-Lifecycle          |
-| `tests/test_app.py`     | `App.fqdn`-Caching, `--no_tls`-Banner, CLI-Validation     |
+| `tests/test_app.py`     | `App.fqdn`-Caching, `--client_id`/`PROBE_CLIENT_ID`-Override + Precedence, `--no_tls`-Banner, CLI-Validation |
 
 ```bash
 pip install -r requirements-dev.txt
@@ -38,7 +38,7 @@ pytest -x --pdb                         # bei Fail in PDB-Debugger
 
 - Echtes MQTT-Verhalten (Reconnect, QoS, Retained Messages)
 - Hardware-Edge-Cases (kaputter wpctl-Output, ungewoehnliche LHM-Sensoren)
-- systemd / NSSM Lifecycle
+- systemd / shawl Lifecycle
 
 ---
 
@@ -56,7 +56,7 @@ Linux-CI nie ausfuehrbar.
 
 ## 3. Integration-Tests
 
-`tests/test_integration.py`: 11 Tests die echte MQTT-Roundtrips
+`tests/test_integration.py`: 9 Tests die echte MQTT-Roundtrips
 verifizieren — Probe-Subprocess gegen externen Mosquitto.
 
 | Test                                                        | Verifiziert                                                   |
@@ -69,9 +69,7 @@ verifizieren — Probe-Subprocess gegen externen Mosquitto.
 | `test_command_blocked_returns_method_not_allowed`           | Capability-Gate: shutdown abgewiesen                          |
 | `test_capability_gate_blocks_module_attribute`              | `os`-Attack-Pfad abgewiesen                                   |
 | `test_whitelist_gate_blocks_module_attribute`               | `os` in capabilities → "Unknown method"                       |
-| `test_last_will_published_on_unclean_disconnect`            | SIGKILL → connected="0" via Will                              |
 | `test_probe_exponential_backoff_on_dead_broker`             | Reconnect-Backoff 5s→10s→20s aus App-Logs                     |
-| `test_probe_connects_via_tls`                               | mTLS-Handshake mit ephemerer self-signed CA                   |
 
 Tests skippen automatisch wenn kein Broker erreichbar ist.
 
@@ -79,7 +77,8 @@ Tests skippen automatisch wenn kein Broker erreichbar ist.
 
 ```bash
 # Debian/Ubu:   sudo apt install mosquitto && mosquitto -p 11883 -v
-# Windows:      winget install EclipseFoundation.Mosquitto
+# Windows:      installers\mosquitto-*-install-windows-x64.exe ausfuehren
+#               (aus dem Offline-Bundle: scripts\prepare-offline.ps1), dann
 #               mosquitto -p 11883 -v
 
 pytest -m integration
@@ -174,8 +173,9 @@ invasiv — bei Live-Betrieb mit `SKIP_AUDIO=1`.
 mute-toggle, easire, shutdown.exe).
 
 **Wichtig:** LHM braucht **Administrator-Rechte** fuer Hardware-Sensoren.
-Wenn die Probe als Service laeuft, muss der NSSM-Service-User
-entsprechende Rechte haben — sonst kommen leere `temperatures()`/`fans()`.
+Wenn die Probe als Service laeuft, muss der Service-User (Default
+LocalSystem) entsprechende Rechte haben — sonst kommen leere
+`temperatures()`/`fans()`.
 
 ### Manuelle Direkt-Aufrufe
 

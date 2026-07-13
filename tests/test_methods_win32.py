@@ -186,6 +186,93 @@ def test_win32_lhm_temperatures_coretemp_shape():
     assert all('Max' not in e['label'] for e in ct)
 
 
+def test_win32_lhm_null_sensor_value_is_skipped_not_fatal():
+    """LHM's ISensor.Value is Nullable<float> -> None via pythonnet when a
+    sensor has no current reading (first update pending, failed MSR/EC read,
+    GPU asleep). A single null sensor -- even on non-CPU hardware that
+    temperatures() later filters out -- must not abort the whole poll with
+    float(None) -> TypeError; the remaining sensors still get reported.
+    Regression test for the kosmo-rt on_temperatures TypeError."""
+    from methods import _win32
+
+    _win32._lhm_computer = None
+
+    SensorType = MagicMock()
+    SensorType.Temperature = 'TEMP'
+    SensorType.Fan = 'FAN'
+    _WIN_MOCKS['lhm_hw'].SensorType = SensorType
+
+    pkg = _make_lhm_sensor('CPU Package', 55.0, 'TEMP', 'TEMP')
+    core1 = _make_lhm_sensor('CPU Core #1', 40.0, 'TEMP', 'TEMP')
+    core2_null = _make_lhm_sensor('CPU Core #2', None, 'TEMP', 'TEMP')
+    mb_null = _make_lhm_sensor('Temperature #3', None, 'TEMP', 'TEMP')
+
+    cpu_hw = _make_lhm_hardware('Intel Core i7', 'Cpu', [pkg, core1, core2_null])
+    mb_hw = _make_lhm_hardware('Z690 Board', 'Motherboard', [mb_null])
+
+    computer = MagicMock()
+    computer.Hardware = [cpu_hw, mb_hw]
+    _WIN_MOCKS['lhm_hw'].Computer.return_value = computer
+
+    result = _win32.temperatures()
+
+    labels = [e['label'] for e in result['coretemp']]
+    assert 'Package id 0' in labels
+    assert 'Core 0' in labels
+    # the null core is skipped, not reported as 0/None
+    assert len(result['coretemp']) == 2
+
+
+def test_win32_lhm_all_null_sensors_returns_empty():
+    """Every sensor null (e.g. first poll right after service start, before
+    LHM's first successful read) -> temperatures() returns {} like 'no
+    sensors', instead of raising."""
+    from methods import _win32
+
+    _win32._lhm_computer = None
+
+    SensorType = MagicMock()
+    SensorType.Temperature = 'TEMP'
+    SensorType.Fan = 'FAN'
+    _WIN_MOCKS['lhm_hw'].SensorType = SensorType
+
+    pkg = _make_lhm_sensor('CPU Package', None, 'TEMP', 'TEMP')
+    cpu_hw = _make_lhm_hardware('Intel Core i7', 'Cpu', [pkg])
+
+    computer = MagicMock()
+    computer.Hardware = [cpu_hw]
+    _WIN_MOCKS['lhm_hw'].Computer.return_value = computer
+
+    assert _win32.temperatures() == {}
+
+
+def test_win32_lhm_null_fan_value_is_skipped_not_fatal():
+    """Same null-guard for fans(): a null fan sensor is dropped, valid
+    fans still land under 'dell_smm'."""
+    from methods import _win32
+
+    _win32._lhm_computer = None
+
+    SensorType = MagicMock()
+    SensorType.Temperature = 'TEMP'
+    SensorType.Fan = 'FAN'
+    _WIN_MOCKS['lhm_hw'].SensorType = SensorType
+
+    sys_fan = _make_lhm_sensor('System Fan #1', 800, 'FAN', 'FAN')
+    dead_fan = _make_lhm_sensor('Fan #2', None, 'FAN', 'FAN')
+
+    mb_hw = _make_lhm_hardware('Dell Board', 'Motherboard', [sys_fan, dead_fan])
+
+    computer = MagicMock()
+    computer.Hardware = [mb_hw]
+    _WIN_MOCKS['lhm_hw'].Computer.return_value = computer
+
+    result = _win32.fans()
+
+    labels = [s['label'] for s in result['dell_smm']]
+    assert labels == ['System Fan #1']
+
+
 def test_win32_lhm_fans_system_only_under_dell_smm():
     """System/chassis fans (non-GPU hardware) land under 'dell_smm'; the GPU
     fan is excluded -- it is not a system fan and would be a wrong value the

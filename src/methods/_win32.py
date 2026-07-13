@@ -140,7 +140,16 @@ def _get_lhm_computer():
 
 def _iter_lhm_sensors(target_name):
     """Yield (hardware, sensor_name, value) for every sensor of the given
-    type ('Temperature' or 'Fan') across all hardware + sub-hardware."""
+    type ('Temperature' or 'Fan') across all hardware + sub-hardware.
+
+    Sensors without a current reading are skipped: ISensor.Value is a
+    .NET Nullable<float> that pythonnet hands to Python as None -- null
+    before the sensor's first successful Update(), on a failed MSR/EC
+    read, under SMBus/ISA-bus mutex contention, or while a GPU is
+    powered down. This iterator sees ALL hardware (motherboard, EC,
+    GPU) before the callers filter by type, so a single null sensor
+    anywhere would otherwise abort the entire poll cycle with
+    float(None) -> TypeError."""
     c = _get_lhm_computer()
     from LibreHardwareMonitor.Hardware import SensorType
     target = getattr(SensorType, target_name)
@@ -151,8 +160,14 @@ def _iter_lhm_sensors(target_name):
             sub.Update()
             sensors.extend(sub.Sensors)
         for s in sensors:
-            if s.SensorType == target:
-                yield hw, str(s.Name), float(s.Value)
+            if s.SensorType != target:
+                continue
+            # Read Value once -- it can flip to null between accesses
+            # if something else drives an Update() concurrently.
+            value = s.Value
+            if value is None:
+                continue
+            yield hw, str(s.Name), float(value)
 
 
 def temperatures() -> dict[str, list[dict]]:

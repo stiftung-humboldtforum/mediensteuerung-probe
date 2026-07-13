@@ -9,3 +9,12 @@ PROBE_METHODS="ping,temperatures,fans,uptime,display,is_muted"
 #   wake, shutdown, reboot, mute, unmute, ping
 # 'wake' wird vom Manager extern via WoL ausgeloest, die Probe sieht es nie.
 PROBE_CAPABILITIES="wake,shutdown,reboot,mute,unmute"
+
+# Optional: explizite MQTT-Identitaet (client_id + Topic-Prefix
+# probe/<id>/... , manager/<id>/+). Ueberschreibt socket.getfqdn().
+# NUR setzen, wenn getfqdn() auf der Box den falschen Namen liefert
+# (z.B. Multi-NIC/kein DNS-Suffix -> bare hostname statt <name>.<suffix>).
+# Wert muss der vom Manager erwarteten FQDN entsprechen. Ungueltige Werte
+# (Leerzeichen oder / + #) werden ignoriert -> Fallback auf getfqdn().
+# Precedence: CLI --client_id > PROBE_CLIENT_ID (hier) > socket.getfqdn().
+# PROBE_CLIENT_ID="kosmo-cm-02.kosmo"

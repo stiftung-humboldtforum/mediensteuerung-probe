@@ -6,7 +6,7 @@ Kommandos entgegen.
 
 ## Features
 
-- MQTT-Client (TLS / mTLS optional, Last-Will, retained Status-Topics)
+- MQTT-Client (TLS / mTLS optional, retained Status-Topics)
 - Cross-Platform: Linux + Windows mit plattform-spezifischen Sensoren
 - Hardware-Monitoring: CPU/GPU-Temperaturen + Lueftern via psutil (Linux)
   bzw. LibreHardwareMonitor (Windows)
@@ -31,7 +31,7 @@ tests/                         pytest unit + integration (Mosquitto extern)
 scripts/
   smoke-test.sh                MQTT-Verifikation pre-/post-deploy
   hardware-test-{linux,windows}.* Hardware-Sensor-Checks am Geraet
-  install-windows.ps1          Idempotenter NSSM-Service-Setup
+  install-windows.ps1          Idempotenter shawl-Service-Setup
   mpv_control.example.sh       Reference-Impl fuer mpv_file_pos_sec
 systemd/humboldt-probe.service Reference-Unit (Type=notify, WatchdogSec=30s)
 lib/win32/                     LibreHardwareMonitorLib.dll + HidSharp.dll
@@ -43,6 +43,13 @@ Zwei Praefixe:
 
 - `probe/<fqdn>/...`   — outbound (Sensor-Daten + Command-Antworten)
 - `manager/<fqdn>/...` — inbound (Kommandos vom Manager)
+
+`<fqdn>` ist die MQTT-Identitaet der Probe (zugleich der MQTT-`client_id`):
+per Default `socket.getfqdn()`, ueberschreibbar via `--client_id` bzw.
+`PROBE_CLIENT_ID` (siehe [CLI-Optionen](#cli-optionen) / [Configuration](#configuration)).
+Der Manager adressiert das Geraet exakt unter diesem String — auf Boxen wo
+`getfqdn()` den baren Hostnamen liefert (Multi-NIC / kein DNS-Suffix) muss die
+Identitaet explizit gepinnt werden, sonst ist das Geraet unsichtbar.
 
 ### Outbound
 
@@ -87,10 +94,11 @@ oder bei Fehler:
 
 ### Windows
 
-- Python 3.13 system-wide (`winget install Python.Python.3.13 --scope machine`)
 - Netzwerk-Zugang zum MQTT-Broker
 - LibreHardwareMonitorLib.dll + HidSharp.dll in `lib/win32/` (im Repo)
-- NSSM fuer Service-Betrieb
+- **Offline-Install:** Python, pip-Wheels und shawl werden gebündelt von
+  `scripts/prepare-offline.ps1` geladen und von `scripts/install-windows.ps1`
+  **ohne Internet/winget** installiert (siehe [installers/README.md](installers/README.md))
 
 ## Installation
 
@@ -98,8 +106,8 @@ oder bei Fehler:
 # Linux
 pip install -r requirements.lock.txt
 
-# Windows
-pip install -r requirements.lock.windows.txt
+# Windows (manuell; vollautomatischer Offline-Weg s.u. "Windows (shawl, offline)")
+pip install -r requirements.lock.txt
 
 # Dev / Tests
 pip install -r requirements-dev.txt
@@ -140,6 +148,7 @@ python src/app.py \
 | `--keyfile`        | `client_key.pem`         | Client-Key fuer mTLS                    |
 | `--no_tls`         | false                    | TLS aus (nur lokales Testen)            |
 | `--loglevel`       | INFO                     | CRITICAL/ERROR/WARNING/INFO/DEBUG       |
+| `--client_id`      | (`socket.getfqdn()`)     | Explizite MQTT-Identitaet (client_id + Topic-Prefix). Ueberschreibt getfqdn(). Auch via `PROBE_CLIENT_ID`. Precedence: CLI > config > getfqdn(). |
 
 ### Env-Variablen
 
@@ -158,6 +167,12 @@ PROBE_CAPABILITIES="wake,shutdown,reboot,mute,unmute"
 
 `PROBE_METHODS` — Sensoren die alle 5s gepollt werden.
 `PROBE_CAPABILITIES` — Kommandos die der Manager senden darf.
+`PROBE_CLIENT_ID` — optional, explizite MQTT-Identitaet (client_id +
+Topic-Prefix `probe/<id>/...`). Nur setzen wenn `socket.getfqdn()` auf der
+Box den falschen/baren Namen liefert (Multi-NIC / kein DNS-Suffix). Muss der
+vom Manager erwarteten FQDN entsprechen; ungueltige Werte (Whitespace oder
+`/ + #`) werden ignoriert → Fallback auf `getfqdn()`. Precedence:
+`--client_id` (CLI) > `PROBE_CLIENT_ID` (hier) > `socket.getfqdn()`.
 
 ### PROBE_METHODS
 
@@ -201,15 +216,26 @@ journalctl -u humboldt-probe -f
 `Type=notify` mit `WatchdogSec=30s` — gestallter Probe wird automatisch
 neu gestartet.
 
-### Windows (NSSM)
+### Windows (shawl, offline)
+
+Installiert nach `C:\HumboldtProbe` (gleiches Ziel wie der Kiosk). Zwei Offline-Wege,
+**ohne Internet/winget**:
+
+**Standalone-Installer** (beliebiger Rechner, "einfach installieren"): Paket einmal
+bauen, auf den Zielrechner kopieren, `install.cmd` als Admin ausfuehren. Siehe
+[standalone-installer/](standalone-installer/README.md).
+
+**Aus einem Checkout** (Dev / dieses Repo):
 
 ```powershell
-winget install NSSM.NSSM
-.\scripts\install-windows.ps1   # Default: srv-control-avm + Certs aus C:\humboldt-probe\
-nssm {start|stop|restart|status} HumboldtProbe
+.\scripts\prepare-offline.ps1   # einmalig, online: Bundle nach installers/ laden
+.\scripts\install-windows.ps1   # offline: shawl + Python + Deps + Service (Default srv-control-avm, Certs aus C:\HumboldtProbe\certs\)
+Get-Service HumboldtProbe       # bzw. Start-Service / Stop-Service / Restart-Service
 ```
 
-NSSM startet die Probe bei Boot und nach Crash automatisch neu.
+shawl startet die Probe bei Boot und nach Crash automatisch neu (`--restart`).
+Auf einem Dev-Rechner mit Internet alternativ `winget install mtkennerly.shawl`
++ `pip install -r requirements.lock.txt` von Hand.
 
 ## Operations
 
@@ -217,8 +243,7 @@ NSSM startet die Probe bei Boot und nach Crash automatisch neu.
 
 | Topic                    | Zweck                                                |
 | ------------------------ | ---------------------------------------------------- |
-| `probe/<fqdn>/connected` | `"1"` online, `"0"` Last-Will. retained.             |
-| `probe/<fqdn>/version`   | Probe-Software-Version (z.B. `0.2.0`). retained.     |
+| `probe/<fqdn>/connected` | `"1"` online. Kein `"0"`/Last-Will — Manager erkennt offline via Ping-Timeout. retained. |
 | `probe/<fqdn>/capabilities` | CSV der unterstuetzten Kommandos. retained.       |
 | `probe/<fqdn>/boot_time` | Unix-epoch Boot. retained.                            |
 | `probe/<fqdn>/errors`    | Status-Aggregation pro Sensor (alle 5s).             |
@@ -230,8 +255,9 @@ mTLS-Zertifikate haben begrenzte Lifetime. Vor Ablauf:
 1. Neue Cert+Key auf Kiosk legen (gleiche Dateinamen ueberschreiben).
 2. Service neu starten:
    - Linux: `sudo systemctl restart humboldt-probe`
-   - Windows: `nssm restart HumboldtProbe`
-3. Verify: `journalctl -u humboldt-probe -n 50` (Linux) bzw. NSSM-Logfile.
+   - Windows: `Restart-Service HumboldtProbe`
+3. Verify: `journalctl -u humboldt-probe -n 50` (Linux) bzw.
+   `C:\HumboldtProbe\probe_rCURRENT.log` (Windows).
 
 ### Update / Rollback
 
@@ -245,8 +271,10 @@ git -C /opt/humboldt-probe checkout <previous-tag>
 sudo systemctl restart humboldt-probe
 ```
 
-`probe/<fqdn>/version` zeigt nach Restart die neue Version — Manager-
-Dashboard kann Fleet-Drift erkennen.
+Deployten Stand pruefen: `git -C /opt/humboldt-probe describe --tags`
+(Linux) bzw. `git describe --tags` im Install-Verzeichnis. Ein
+`probe/<fqdn>/version`-Topic existiert nicht (Publish + `misc.VERSION`
+wurden bewusst entfernt — der Manager kennt kein version-Feld).
 
 ### Troubleshooting
 
@@ -258,14 +286,15 @@ Dashboard kann Fleet-Drift erkennen.
 | `Setup failed, retrying in 5s` Loop | Persistent error in `_setup` (cert / hostname / config_file) | `journalctl -u humboldt-probe -n 50` zeigt Stacktrace; ersten Fehler beheben |
 | Manager sieht `connected="1"` aber keine Sensor-Daten | `PROBE_METHODS` leer oder nur unbekannte Sensoren | `cat userconfig.txt` und Log nach `Ignoring unknown PROBE_METHODS` durchsuchen |
 | Manager-Command `mute` antwortet `Method not allowed` | `mute` fehlt in `PROBE_CAPABILITIES` | `userconfig.txt` ergaenzen, Service neu starten |
-| `probe/<fqdn>/temperatures` ist `{}` (leer, Windows) | LHM braucht Admin-Rechte; NSSM-Service als LocalSystem oder Admin-User starten | `nssm set HumboldtProbe ObjectName <Admin-User> ...` |
+| `probe/<fqdn>/temperatures` ist `{}` (leer, Windows) | LHM braucht Admin-Rechte; Service als LocalSystem (Default) oder Admin-User starten | `install-windows.ps1` ohne `-ServiceUser` (= LocalSystem), oder `sc config HumboldtProbe obj= <Admin-User> password= <pw>` |
 | `wpctl: command not found` (Linux) | PipeWire/WirePlumber nicht installiert | `sudo apt install pipewire wireplumber` |
 | `Cannot read config ...` | userconfig.txt-Pfad falsch oder Permissions | `ls -la` + ggf. owner-Anpassung an Probe-User |
 
 ## Testing
 
-Mosquitto fuer Integration-Tests installieren (`apt install mosquitto`
-auf Linux / `winget install EclipseFoundation.Mosquitto` auf Windows),
+Mosquitto fuer Integration-Tests installieren (`apt install mosquitto` auf
+Linux; auf Windows den gebuendelten `installers/mosquitto-*-install-windows-x64.exe`
+aus dem Offline-Bundle ausfuehren -- oder online `winget install EclipseFoundation.Mosquitto`),
 dann:
 
 ```bash
