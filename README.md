@@ -87,10 +87,18 @@ oder bei Fehler:
 
 ### Linux
 
-- Python 3.9-3.13 (3.14 nicht unterstuetzt — pythonnet-Cap)
+- Python 3.9+ (der `3.14`-Cap gilt nur Windows — dort haengt er an
+  pythonnet; auf Linux gibt es kein pythonnet). Der automatisierte
+  Offline-Install bringt ein eigenes Python 3.11 mit, dann ist die
+  Host-Python-Version egal.
 - Netzwerk-Zugang zum MQTT-Broker
 - wpctl (PipeWire/WirePlumber) fuer Audio
 - xrandr fuer Display-Info
+- **Offline-Install:** Standalone-Python, pip-Wheels und die System-Pakete
+  (pipewire/wireplumber/xrandr/mosquitto-clients + Dependency-Closure)
+  werden von `scripts/prepare-offline-linux.sh` gebuendelt und von
+  `scripts/install-linux.sh` **ohne Internet/apt-Repo** installiert
+  (Debian 12 bookworm / x86_64; siehe [installers-linux/README.md](installers-linux/README.md))
 
 ### Windows
 
@@ -204,17 +212,33 @@ in [`scripts/mpv_control.example.sh`](scripts/mpv_control.example.sh).
 
 ## Service-Betrieb
 
-### Linux (systemd)
+### Linux (systemd, offline)
+
+Installiert nach `/opt/humboldt-probe` (Config + Certs unter
+`/etc/humboldt-probe`). Zwei Offline-Wege, **ohne Internet/apt-Repo** — analog
+zum Windows-Weg:
+
+**Standalone-Installer** (beliebiger bookworm/amd64-Rechner, "einfach
+installieren"): Paket einmal bauen, auf den Zielrechner kopieren, `install.sh`
+als root ausfuehren. Siehe [standalone-installer-linux/](standalone-installer-linux/README.md).
+
+**Aus einem Checkout** (Dev / dieses Repo):
 
 ```bash
-sudo cp systemd/humboldt-probe.service /etc/systemd/system/
-sudo systemctl daemon-reload
-sudo systemctl enable --now humboldt-probe
-journalctl -u humboldt-probe -f
+bash scripts/prepare-offline-linux.sh   # einmalig, online (bookworm/amd64): Bundle nach installers-linux/ laden
+sudo bash scripts/install-linux.sh      # offline: .debs + Python + Deps + Service (Default srv-control-avm, Certs aus /etc/humboldt-probe/)
+systemctl status humboldt-probe         # bzw. start/stop/restart
 ```
 
-`Type=notify` mit `WatchdogSec=30s` — gestallter Probe wird automatisch
-neu gestartet.
+`install-linux.sh` entpackt ein gebuendeltes Standalone-Python nach
+`/opt/humboldt-probe/python`, installiert die Deps offline hinein, legt den
+User `probe` + einen NOPASSWD-Sudoers-Eintrag (shutdown/reboot) an und rendert
+die systemd-Unit selbst (kein manuelles `cp`). `Type=notify` mit
+`WatchdogSec=30s` — ein gestallter Probe wird automatisch neu gestartet.
+
+**Manueller Weg** (ohne Offline-Bundle, Host-Python): die Referenz-Unit
+[`systemd/humboldt-probe.service`](systemd/humboldt-probe.service) kopieren und
+`ExecStart` auf das gewuenschte Python (System oder venv) anpassen.
 
 ### Windows (shawl, offline)
 
