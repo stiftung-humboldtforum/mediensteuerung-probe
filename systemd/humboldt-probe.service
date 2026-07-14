@@ -1,6 +1,10 @@
-# Humboldt-Probe systemd unit (Beispiel)
+# Humboldt-Probe systemd unit (Referenz / manueller Weg)
 #
-# Pfade entsprechend anpassen, dann:
+# Fuer den automatisierten Offline-Weg NICHT diese Datei kopieren --
+# scripts/install-linux.sh rendert eine eigene Unit mit den richtigen Pfaden.
+# Diese hier ist die Referenz fuer eine manuelle Installation.
+#
+# Pfade ggf. anpassen, dann:
 #   sudo cp humboldt-probe.service /etc/systemd/system/
 #   sudo systemctl daemon-reload
 #   sudo systemctl enable --now humboldt-probe
@@ -8,7 +12,8 @@
 # Logs: journalctl -u humboldt-probe -f
 #
 # Voraussetzungen auf dem Host:
-#   - Python 3.9+ in /usr/bin/python3 (oder Pfad anpassen)
+#   - Python unter /opt/humboldt-probe/python/bin/python3 (gebuendelt) ODER
+#     Pfad in ExecStart auf ein System-Python / venv anpassen
 #   - Source-Tree unter /opt/humboldt-probe
 #   - userconfig.txt + TLS-Zertifikate unter /etc/humboldt-probe/
 #   - User 'probe' (sudoers-Eintrag fuer shutdown/reboot, siehe unten)
@@ -39,13 +44,14 @@ WorkingDirectory=/opt/humboldt-probe
 # die UID nicht 1000 ist.
 Environment=DISPLAY=:0
 Environment=XDG_RUNTIME_DIR=/run/user/1000
+Environment=PYTHONDONTWRITEBYTECODE=1
 
 # Optional: eine explizite MQTT-Identitaet pinnen, wenn socket.getfqdn() auf
 # dieser Box den falschen/baren Namen liefert (Multi-NIC / kein DNS-Suffix).
 # Dazu eine weitere Zeile in ExecStart aufnehmen, z.B.:
 #     --client_id=<name>.<suffix> \
 # Precedence: --client_id > PROBE_CLIENT_ID (userconfig.txt) > socket.getfqdn().
-ExecStart=/usr/bin/python3 src/app.py \
+ExecStart=/opt/humboldt-probe/python/bin/python3 src/app.py \
     --config_file=/etc/humboldt-probe/userconfig.txt \
     --mqtt_hostname=srv-control-avm \
     --mqtt_port=8883 \
@@ -61,12 +67,14 @@ ExecStart=/usr/bin/python3 src/app.py \
 Restart=on-failure
 RestartSec=5
 
-# Hardening
+# Hardening. ProtectHome / PrivateTmp bewusst AUS: die display/audio-Sensoren
+# brauchen die Session des Kiosk-Users -- ProtectHome wuerde /run/user (PipeWire-
+# Socket fuer wpctl) leeren, PrivateTmp den X11-Socket /tmp/.X11-unix verstecken.
+# ProtectSystem=strict ist safe: die Probe schreibt nichts (Logs -> journald,
+# PYTHONDONTWRITEBYTECODE verhindert .pyc-Schreibversuche unter /opt). Kein
+# ReadWritePaths -- ein nicht-existentes wuerde das Namespacing brechen (226).
 NoNewPrivileges=true
 ProtectSystem=strict
-ProtectHome=true
-PrivateTmp=true
-ReadWritePaths=/var/log/humboldt-probe
 
 [Install]
 WantedBy=multi-user.target
