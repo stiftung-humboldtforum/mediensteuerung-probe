@@ -204,6 +204,18 @@ class App:
         SystemExit during interactive use. The outer try/finally
         guarantees a clean stop() in every exit path so no thread or
         socket leaks behind."""
+        # Signal systemd readiness at process init, NOT after the first broker
+        # connect. With Type=notify, gating READY=1 on connectivity makes systemd
+        # kill the unit at TimeoutStartSec (default 90s) whenever the broker is
+        # unreachable at boot, and Restart=on-failure then loops it forever --
+        # defeating the reconnect backoff this loop implements. "Ready" here means
+        # the process is up and feeding the watchdog; connect state is carried in
+        # notify.status(). The watchdog (WatchdogSec) stays fed by the periodic
+        # notify.notify() pings in the poll loop and in _backoff_sleep().
+        if self.notify_enabled:
+            self.notify.ready()
+            self.notify.status('Starting...')
+            self.notify.notify()
         backoff = self.BACKOFF_INITIAL
         try:
             self._run_loop(backoff)
@@ -266,7 +278,8 @@ class App:
                 backoff = self.BACKOFF_INITIAL
 
                 if self.notify_enabled:
-                    self.notify.ready()
+                    # READY was already sent at process init (see run()); here we
+                    # only update the operator-visible status.
                     self.notify.status('Connected.')
                     self.notify.notify()
 

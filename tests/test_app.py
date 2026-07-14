@@ -314,9 +314,11 @@ def _make_notify_mock():
 
 
 def test_notify_status_sequence_on_setup_failure():
-    """When _setup() raises (e.g. TLS-cert missing), App.run should NOT
-    call notify.ready() (we never reached connected) — only the
-    'Setup failed: <type>' status update.
+    """When _setup() raises (e.g. TLS-cert missing), App.run still sends
+    READY=1 once at process init (readiness = process up, not broker-
+    connected), and then emits the 'Setup failed: <type>' status update.
+    Gating READY on connectivity would let systemd kill the unit at
+    TimeoutStartSec whenever the broker is down at boot.
     """
     notify = _make_notify_mock()
     app = _make_app(notify=notify)
@@ -337,8 +339,8 @@ def test_notify_status_sequence_on_setup_failure():
         with pytest.raises(KeyboardInterrupt):
             app.run()
 
-    # ready() should NOT have been called — we never reached connected
-    notify.ready.assert_not_called()
+    # ready() is sent exactly once, at process init (before the connect loop).
+    notify.ready.assert_called_once()
     # status() called with 'Setup failed: RuntimeError: TLS handshake failed'
     status_calls = [c.args[0] for c in notify.status.call_args_list]
     assert any('Setup failed' in s and 'RuntimeError' in s for s in status_calls), \
