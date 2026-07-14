@@ -173,6 +173,15 @@ cython_debug/
 /installers/*
 !/installers/README.md
 
+# Linux offline install bundle -- fetched by scripts/prepare-offline-linux.sh
+# (standalone Python tarball, wheels/, debs/, manifest). Same policy.
+/installers-linux/*
+!/installers-linux/README.md
+
+# Extracted standalone Python runtime when installing in place (at /opt/humboldt-probe).
+/python/
+
 # Standalone offline-installer output (bundled binaries + fleet mTLS key).
 # Built by standalone-installer/build-standalone-installer.ps1; treat as a secret.
 standalone-installer/dist/
+standalone-installer-linux/dist/
