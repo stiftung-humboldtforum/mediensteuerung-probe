@@ -1,49 +1,58 @@
 #!/usr/bin/env bash
-# scripts/prepare-offline-linux.sh — fetch the OFFLINE install bundle for Linux.
+# scripts/prepare-offline-linux.sh — build the OFFLINE install bundle for Linux.
 #
-# Linux counterpart to scripts/prepare-offline.ps1. Run this ONCE on a machine
-# with internet that MATCHES the target (Debian 12 "bookworm", x86_64);
-# afterwards scripts/install-linux.sh installs everything with NO internet.
+# Linux counterpart to scripts/prepare-offline.ps1. Run ONCE on any Debian-based
+# host with internet (Debian / Ubuntu / Pop!_OS / Mint ...); afterwards
+# scripts/install-linux.sh installs everything with NO internet.
 #
-# Why "matches the target": two of the three artefacts are release/arch-bound —
-#   - the .deb closure is bookworm/amd64 packages (a jammy/noble .deb will not
-#     dpkg cleanly onto bookworm), and
-#   - the pip wheels are cp311 / manylinux x86_64.
-# So this script refuses to run on a non-bookworm / non-amd64 host unless
-# ALLOW_HOST_MISMATCH=1 is set (you are then on your own re: dpkg on the target).
+# Artefacts land in installers-linux/ (gitignored):
+#   - python/  standalone Python (python-build-standalone, SHA256-verified) and
+#   - wheels/  pip wheels: both distro-agnostic, built for the BUILD HOST's arch.
+#   - debs/    the .deb closure for the TARGET Debian release: pipewire/
+#              wireplumber/x11-xserver-utils/mosquitto-clients + full dep closure.
+#   - bundle.manifest.linux.json   versions + sha256 + lockHash + target codename.
 #
-# It populates installers-linux/ (gitignored):
+# The .deb closure is built against the target's Debian repos via an ISOLATED
+# apt-root (a private apt config with an empty dpkg status), so the build host
+# can be ANY Debian-based distro regardless of the target release -- no container,
+# no chroot. apt's own solver resolves the closure (correct alternative providers,
+# so e.g. libsystemd0 is chosen over libelogind0 automatically). Default target:
+# Debian 13 "trixie" (--target-release to change). Cross-architecture is out of
+# scope: the bundle is built for the build host's arch (amd64 or arm64).
 #
-#   installers-linux/python/cpython-3.11.*-x86_64-...-install_only.tar.gz
-#                                            standalone Python runtime (+ .sha256 verified)
-#   installers-linux/wheels/*.whl            pip wheels, pinned to requirements.lock.txt
-#   installers-linux/debs/*.deb              pipewire/wireplumber/xrandr/mosquitto-clients
-#                                            + full recursive dependency closure
-#   installers-linux/bundle.manifest.linux.json   resolved versions + sha256 + lockHash
-#
-# Flags:
-#   --force     re-fetch every component even if already present
-#   --offline   no network; only validate that the bundle is present
+# Flags: --target-release <codename> (default trixie), --mirror <url>,
+#        --keyring <path>, --force, --offline. Env: PROBE_TARGET_RELEASE.
 #
 # Exit: 0 = bundle ready, 1 = at least one component failed.
 set -uo pipefail
 
-# --- Target profile (change these two lines for a different arch/release) -----
-ARCH='x86_64'
-PBS_TRIPLE='x86_64-unknown-linux-gnu'   # python-build-standalone target triple
-PY_MINOR='3.11'                          # bundled Python minor (any modern one; we ship it)
-TARGET_CODENAME='bookworm'               # Debian 12
+# --- Target profile -----------------------------------------------------------
+PY_MINOR='3.11'                          # bundled Python minor (we ship it; independent of target distro)
 SYS_PKGS='pipewire wireplumber x11-xserver-utils mosquitto-clients'
+TARGET_RELEASE="${PROBE_TARGET_RELEASE:-trixie}"        # Debian 13 default
+MIRROR="${PROBE_MIRROR:-http://deb.debian.org/debian}"  # Debian archive mirror
+KEYRING="${PROBE_KEYRING:-/usr/share/keyrings/debian-archive-keyring.gpg}"
+
+# Architecture derived from the build host (cross-arch is out of scope).
+deb_arch="$(dpkg --print-architecture 2>/dev/null || echo amd64)"
+case "$deb_arch" in
+    amd64) ARCH='x86_64';  PBS_TRIPLE='x86_64-unknown-linux-gnu' ;;
+    arm64) ARCH='aarch64'; PBS_TRIPLE='aarch64-unknown-linux-gnu' ;;
+    *) echo "Unsupported build-host architecture '$deb_arch' (amd64/arm64 only)." >&2; exit 2 ;;
+esac
 
 # --- Args -----------------------------------------------------------------
 FORCE=0
 OFFLINE=0
-for a in "$@"; do
-    case "$a" in
-        --force)   FORCE=1 ;;
-        --offline) OFFLINE=1 ;;
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --force)          FORCE=1; shift ;;
+        --offline)        OFFLINE=1; shift ;;
+        --target-release) TARGET_RELEASE="$2"; shift 2 ;;
+        --mirror)         MIRROR="$2"; shift 2 ;;
+        --keyring)        KEYRING="$2"; shift 2 ;;
         -h|--help) grep '^#' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
-        *) echo "Unknown arg: $a" >&2; exit 2 ;;
+        *) echo "Unknown arg: $1" >&2; exit 2 ;;
     esac
 done
 
@@ -74,23 +83,18 @@ echo "=== prepare-offline-linux: bundle -> $inst ==="
 echo
 
 # --- Host sanity ----------------------------------------------------------
-# Not fatal in offline mode (we are only validating), but online we must build
-# on the target profile or the artefacts will not apply cleanly.
-host_codename=''
+# The .deb step needs a Debian-family apt-get + dpkg (the host distro/release is
+# irrelevant -- the isolated apt-root targets the requested Debian release). Only
+# enforced online; offline mode just validates an existing bundle.
+host_id=''
 if [ -r /etc/os-release ]; then
     # shellcheck disable=SC1091
-    host_codename="$(. /etc/os-release 2>/dev/null; echo "${VERSION_CODENAME:-}")"
+    host_id="$(. /etc/os-release 2>/dev/null; echo "${ID:-}")"
 fi
-host_arch="$(uname -m 2>/dev/null || echo unknown)"
 if [ "$OFFLINE" != 1 ]; then
-    if [ "$host_codename" != "$TARGET_CODENAME" ] || [ "$host_arch" != "$ARCH" ]; then
-        msg="build host is ${host_codename:-?}/${host_arch} but bundle targets ${TARGET_CODENAME}/${ARCH}"
-        if [ "${ALLOW_HOST_MISMATCH:-0}" = 1 ]; then
-            note "   WARN: $msg (ALLOW_HOST_MISMATCH=1 -> continuing)"
-        else
-            fail "$msg. Run on a ${TARGET_CODENAME}/${ARCH} box (or container), or set ALLOW_HOST_MISMATCH=1."
-            echo; echo "prepare-offline-linux aborted."; exit 1
-        fi
+    if ! command -v apt-get >/dev/null 2>&1 || ! command -v dpkg >/dev/null 2>&1; then
+        fail "build host needs apt-get + dpkg (any Debian-based distro). Found ID='${host_id:-?}'."
+        echo; echo "prepare-offline-linux aborted."; exit 1
     fi
 fi
 
@@ -224,54 +228,71 @@ fi
 echo
 
 # =============================================================================
-# 3. .deb closure — pipewire/wireplumber/xrandr/mosquitto-clients + all deps.
-#    "voll autark": we grab the full recursive dependency closure so dpkg on the
-#    target succeeds with no repo. That makes the bundle large (base libs get
-#    pulled in too); dpkg simply skips ones already installed at the same version.
+# 3. .deb closure — built against the TARGET Debian release via an isolated
+#    apt-root (empty dpkg status => apt's own solver resolves the FULL closure,
+#    with correct alternative providers, e.g. libsystemd0 not libelogind0). Runs
+#    from any Debian-based build host; no container, no chroot.
 # =============================================================================
-head1 ".deb closure ($TARGET_CODENAME/$ARCH): $SYS_PKGS"
+head1 ".deb closure (Debian $TARGET_RELEASE/$deb_arch, isolated apt-root): $SYS_PKGS"
 if [ "$OFFLINE" = 1 ]; then
     deb_count="$(ls -1 "$debs"/*.deb 2>/dev/null | wc -l | tr -d ' ')"
     if [ "$deb_count" -ge 1 ]; then note "   offline: keeping $deb_count .debs"
     else fail "debs: offline and none present"; fi
-elif ! command -v apt-get >/dev/null 2>&1 || ! command -v apt-cache >/dev/null 2>&1; then
-    fail "debs: apt-get/apt-cache not found -- run this on a Debian $TARGET_CODENAME box"
 else
     have_debs="$(ls -1 "$debs"/*.deb 2>/dev/null | wc -l | tr -d ' ')"
     if [ "$have_debs" -ge 1 ] && [ "$FORCE" != 1 ]; then
         note "   current: $have_debs .debs (use --force to refresh)"
         deb_count="$have_debs"
+    elif [ ! -r "$KEYRING" ]; then
+        fail "debs: Debian archive keyring not found at $KEYRING. On a non-Debian host run 'sudo apt-get install debian-archive-keyring' (or pass --keyring <path>)."
     else
-        note "   resolving dependency closure ..."
-        # Top-level (^\w) lines from --recurse are the resolved real package
-        # names; indented <virtual> lines are filtered out by the ^\w anchor.
-        # Pre-Depends ARE followed (no --no-pre-depends) so hard boot-order deps
-        # land in the closure too.
-        closure="$(apt-cache depends --recurse --no-recommends --no-suggests \
-                    --no-conflicts --no-breaks --no-replaces --no-enhances \
-                    $SYS_PKGS 2>/dev/null | grep '^\w' | sort -u)"
-        # Drop the elogind side of 'libsystemd0 | libelogind0' alternatives:
-        # --recurse pulls BOTH providers, but every target here is systemd, where
-        # libsystemd0 is the provider and libelogind0 CONFLICTS with it (dpkg
-        # would refuse it). Excluding it keeps the closure clean + conflict-free.
-        closure="$(printf '%s\n' "$closure" | grep -vxE 'elogind|libelogind0|libpam-elogind')"
-        if [ -z "$closure" ]; then
-            fail "debs: apt-cache resolved an empty closure (are the package names available?)"
+        # apt-root on a NATIVE tmpfs/ext dir (not under installers-linux): apt
+        # fchmod()s its list/cache temp files, which fails on filesystems that do
+        # not support it (e.g. a checkout on a drvfs/CIFS mount). Only the final
+        # .debs are copied back into installers-linux (a plain copy, FS-agnostic).
+        aptroot="$(mktemp -d "${TMPDIR:-/tmp}/probe-aptroot.XXXXXX")"; debs_new="$debs.new"
+        rm -rf "$debs_new"
+        mkdir -p "$aptroot"/etc/apt/apt.conf.d "$aptroot"/etc/apt/preferences.d \
+                 "$aptroot"/etc/apt/sources.list.d \
+                 "$aptroot"/var/lib/apt/lists/partial \
+                 "$aptroot"/var/cache/apt/archives/partial \
+                 "$aptroot"/var/lib/dpkg
+        : > "$aptroot/var/lib/dpkg/status"   # empty -> apt considers NOTHING installed
+        printf 'deb [signed-by=%s] %s %s main\n' "$KEYRING" "$MIRROR" "$TARGET_RELEASE" \
+            > "$aptroot/etc/apt/sources.list"
+        aopts=(
+            -o Dir::Etc::sourcelist="$aptroot/etc/apt/sources.list"
+            -o Dir::Etc::sourceparts="$aptroot/etc/apt/sources.list.d"
+            -o Dir::Etc::preferencesparts="$aptroot/etc/apt/preferences.d"
+            -o Dir::State="$aptroot/var/lib/apt"
+            -o Dir::State::status="$aptroot/var/lib/dpkg/status"
+            -o Dir::Cache="$aptroot/var/cache/apt"
+            -o APT::Architecture="$deb_arch"
+            -o APT::Architectures="$deb_arch"
+        )
+        note "   apt-get update (Debian $TARGET_RELEASE via $MIRROR) ..."
+        # Capture apt's output so a failure surfaces the real reason (the benign
+        # 'unsandboxed as root' warning is not a failure and is ignored).
+        if ! apt-get "${aopts[@]}" update >"$aptroot/update.log" 2>&1; then
+            fail "debs: apt-get update against '$MIRROR $TARGET_RELEASE main' failed: $(grep -iE '^(E:|W: Failed|Err:)' "$aptroot/update.log" | head -3 | tr '\n' ' ')"
         else
-            debs_new="$debs.new"; rm -rf "$debs_new"; mkdir -p "$debs_new"
-            note "   downloading $(printf '%s\n' "$closure" | wc -l | tr -d ' ') packages ..."
-            # apt-get download writes into the CWD; run it there. Individual
-            # unavailable virtuals are warned about, not fatal -- we gate on the
-            # final count + a command-presence check on the target instead.
-            ( cd "$debs_new" && apt-get download $closure ) || note "   WARN: some packages failed to download (see above)"
+            note "   resolving + downloading closure (apt solver) ..."
+            # --download-only into the isolated cache; the empty dpkg status makes
+            # apt plan to install the whole closure and simply download it. The
+            # solver picks correct alternative providers, so no elogind hack is
+            # needed. No change to the host system.
+            apt-get "${aopts[@]}" -y --no-install-recommends --download-only install $SYS_PKGS >/dev/null 2>&1 || true
+            mkdir -p "$debs_new"
+            find "$aptroot/var/cache/apt/archives" -maxdepth 1 -name '*.deb' -exec cp -t "$debs_new" {} + 2>/dev/null || true
             built="$(ls -1 "$debs_new"/*.deb 2>/dev/null | wc -l | tr -d ' ')"
             if [ "$built" -ge 1 ]; then
                 rm -rf "$debs"; mv "$debs_new" "$debs"
                 deb_count="$built"; note "   done ($deb_count .debs)."
             else
-                rm -rf "$debs_new"; fail "debs: no .debs downloaded"
+                rm -rf "$debs_new"; fail "debs: apt downloaded no .debs (are $SYS_PKGS in $TARGET_RELEASE main?)."
             fi
         fi
+        rm -rf "$aptroot"
     fi
 fi
 echo
@@ -283,12 +304,12 @@ echo
     printf '{\n'
     printf '  "generated": "%s",\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo unknown)"
     printf '  "host": "%s",\n' "$(hostname 2>/dev/null || echo unknown)"
-    printf '  "target": { "codename": "%s", "arch": "%s", "pyMinor": "%s" },\n' "$TARGET_CODENAME" "$ARCH" "$PY_MINOR"
+    printf '  "target": { "codename": "%s", "arch": "%s", "pyMinor": "%s" },\n' "$TARGET_RELEASE" "$deb_arch" "$PY_MINOR"
     printf '  "items": {\n'
     printf '    "python": { "version": "%s", "file": "%s", "sha256": "%s" },\n' \
         "$py_ver" "$([ -n "$py_file" ] && basename "$py_file" || echo '')" "$py_sha"
     printf '    "wheels": { "lockHash": "%s", "count": %s },\n' "$lock_hash" "${wheel_count:-0}"
-    printf '    "debs":   { "codename": "%s", "arch": "%s", "count": %s }\n' "$TARGET_CODENAME" "$ARCH" "${deb_count:-0}"
+    printf '    "debs":   { "codename": "%s", "arch": "%s", "count": %s }\n' "$TARGET_RELEASE" "$deb_arch" "${deb_count:-0}"
     printf '  },\n'
     printf '  "errors": [%s]\n' "$([ ${#errors[@]} -gt 0 ] && printf '"%s"' "${errors[0]}"; [ ${#errors[@]} -gt 1 ] && printf ', "%s"' "${errors[@]:1}")"
     printf '}\n'
@@ -298,7 +319,7 @@ echo
 echo "Resolved:"
 printf '  python   %s  (%s)\n' "$py_ver" "$([ -n "$py_file" ] && basename "$py_file" || echo MISSING)"
 printf '  wheels   %s\n' "${wheel_count:-0}"
-printf '  debs     %s (%s/%s)\n' "${deb_count:-0}" "$TARGET_CODENAME" "$ARCH"
+printf '  debs     %s (Debian %s/%s)\n' "${deb_count:-0}" "$TARGET_RELEASE" "$deb_arch"
 echo
 
 if [ ${#errors[@]} -gt 0 ]; then

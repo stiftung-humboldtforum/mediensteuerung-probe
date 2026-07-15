@@ -2,7 +2,8 @@
 # standalone-installer-linux/build-standalone-installer-linux.sh
 #
 # Build a self-contained OFFLINE installer package for the Humboldt-Probe that
-# installs on any already-running Debian 12 (bookworm) x86_64 machine -- no
+# installs on any already-running Debian target (the release the bundle was built
+# for; default Debian 13 "trixie"), amd64 or arm64 -- no
 # re-image, no internet, no apt repo. Linux counterpart to
 # standalone-installer/build-standalone-installer.ps1.
 #
@@ -85,13 +86,14 @@ if [ -n "$man_py_sha" ]; then
     [ "$man_py_sha" = "$disk_sha" ] || die "Python tarball SHA256 mismatch vs manifest -- re-run prepare-offline-linux.sh."
 fi
 
-# .deb codename must be bookworm (guards against a bundle built on the wrong release).
+# The bundle is self-describing: whatever Debian release the .debs were built for
+# is recorded in the manifest, and install-linux.sh verifies the TARGET matches it
+# at install time. Here we only require the field to be present (non-empty).
 man_deb_codename="$(grep -oE '"debs":[^}]*"codename": *"[a-z]+"' "$manifest" | grep -oE '[a-z]+"' | tr -d '"' | tail -1 || true)"
-if [ -n "$man_deb_codename" ] && [ "$man_deb_codename" != "bookworm" ]; then
-    die ".deb bundle targets '$man_deb_codename', expected 'bookworm'. Rebuild on a bookworm box."
-fi
+[ -n "$man_deb_codename" ] || die "manifest has no debs.codename -- re-run prepare-offline-linux.sh."
 
 echo "Inputs OK:"
+echo "  target : Debian $man_deb_codename"
 echo "  Python : $(basename "$py_tarball")"
 echo "  wheels : $(ls -1 "$inst"/wheels/*.whl | wc -l | tr -d ' ') packages"
 echo "  debs   : $(ls -1 "$inst"/debs/*.deb | wc -l | tr -d ' ') packages"
