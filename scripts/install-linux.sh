@@ -98,6 +98,20 @@ if [ -r "$manifest" ] && [ -r /etc/os-release ]; then
     fi
 fi
 
+# Arch match: cross-architecture is out of scope; a wrong-arch bundle would let
+# dpkg unpack foreign-ABI .debs. Cheap manifest-vs-dpkg guard, same override style.
+if [ -r "$manifest" ] && command -v dpkg >/dev/null 2>&1; then
+    want_arch="$(sed -nE 's/.*"arch": *"([a-z0-9_]+)".*/\1/p' "$manifest" | head -1)"
+    have_arch="$(dpkg --print-architecture 2>/dev/null || echo '')"
+    if [ -n "$want_arch" ] && [ -n "$have_arch" ] && [ "$want_arch" != "$have_arch" ]; then
+        if [ "${IGNORE_ARCH:-0}" = 1 ]; then
+            echo "WARN: bundle arch '$want_arch' != host arch '$have_arch' (IGNORE_ARCH=1)."
+        else
+            die "bundle targets arch '$want_arch' but this host is '$have_arch'. Build on a matching-arch host, or set IGNORE_ARCH=1 to force."
+        fi
+    fi
+fi
+
 echo "=== Humboldt-Probe Linux install ==="
 echo "  install path : $INSTALL_PATH"
 echo "  config dir   : $CONFIG_DIR"

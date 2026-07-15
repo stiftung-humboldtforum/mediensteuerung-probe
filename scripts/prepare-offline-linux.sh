@@ -280,16 +280,23 @@ else
             # --download-only into the isolated cache; the empty dpkg status makes
             # apt plan to install the whole closure and simply download it. The
             # solver picks correct alternative providers, so no elogind hack is
-            # needed. No change to the host system.
-            apt-get "${aopts[@]}" -y --no-install-recommends --download-only install $SYS_PKGS >/dev/null 2>&1 || true
-            mkdir -p "$debs_new"
-            find "$aptroot/var/cache/apt/archives" -maxdepth 1 -name '*.deb' -exec cp -t "$debs_new" {} + 2>/dev/null || true
-            built="$(ls -1 "$debs_new"/*.deb 2>/dev/null | wc -l | tr -d ' ')"
-            if [ "$built" -ge 1 ]; then
-                rm -rf "$debs"; mv "$debs_new" "$debs"
-                deb_count="$built"; note "   done ($deb_count .debs)."
+            # needed. No change to the host system. The exit code IS checked: a
+            # partial download (transient failure after some .debs landed) must be
+            # a hard error, not a silently-incomplete bundle that passes a count
+            # check and then fails dpkg on the offline target.
+            if ! apt-get "${aopts[@]}" -y --no-install-recommends --download-only install $SYS_PKGS >"$aptroot/install.log" 2>&1; then
+                rm -rf "$debs_new"
+                fail "debs: apt download-only install failed (closure incomplete): $(grep -iE '^(E:|W: Failed|Err:)' "$aptroot/install.log" | head -3 | tr '\n' ' ')"
             else
-                rm -rf "$debs_new"; fail "debs: apt downloaded no .debs (are $SYS_PKGS in $TARGET_RELEASE main?)."
+                mkdir -p "$debs_new"
+                find "$aptroot/var/cache/apt/archives" -maxdepth 1 -name '*.deb' -exec cp -t "$debs_new" {} + 2>/dev/null || true
+                built="$(ls -1 "$debs_new"/*.deb 2>/dev/null | wc -l | tr -d ' ')"
+                if [ "$built" -ge 1 ]; then
+                    rm -rf "$debs"; mv "$debs_new" "$debs"
+                    deb_count="$built"; note "   done ($deb_count .debs)."
+                else
+                    rm -rf "$debs_new"; fail "debs: apt downloaded no .debs (are $SYS_PKGS in $TARGET_RELEASE main?)."
+                fi
             fi
         fi
         rm -rf "$aptroot"
