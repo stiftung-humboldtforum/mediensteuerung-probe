@@ -2,7 +2,8 @@ Humboldt-Probe -- offline installer (Linux)
 ===========================================
 
 Install the Humboldt-Probe (MQTT monitoring agent) on an already-running
-Debian 12 (bookworm) x86_64 machine. No internet, no apt repo required --
+Debian machine (the release this package was built for -- see below).
+No internet, no apt repo required --
 Python, all pip dependencies, the system packages (pipewire/wireplumber/
 xrandr/mosquitto-clients + their dependency closure), the probe itself and
 the TLS material are all bundled in this folder.
@@ -31,8 +32,10 @@ WHAT IT DOES
 
 REQUIREMENTS ON THE TARGET
 --------------------------
-- Debian 12 (bookworm), x86_64. The installer refuses a different release
-  (the bundled .debs are bookworm-specific). Override: IGNORE_CODENAME=1.
+- The Debian release the bundle was built for (default Debian 13 "trixie";
+  shown in installers-linux/bundle.manifest.linux.json), matching amd64/arm64.
+  The installer refuses a different release (the bundled .debs are release-
+  specific). Override: IGNORE_CODENAME=1.
 - If the box's logged-in kiosk user is NOT uid 1000, re-run the service
   installer with --kiosk-uid <uid> (display/audio sensors read that session).
 - The display + audio sensors read the kiosk user's session (/run/user/<uid>,

@@ -1,10 +1,9 @@
 # installers-linux/ — offline install bundle (Linux)
 
-The Humboldt-Probe must be installable on Debian 12 (bookworm) x86_64 machines
-with **no internet and no apt repo**. Everything the Linux install needs is
-fetched here once by
-[`scripts/prepare-offline-linux.sh`](../scripts/prepare-offline-linux.sh) and
-then consumed fully offline by
+The Humboldt-Probe must be installable on Debian-based machines with **no
+internet and no apt repo**. Everything the Linux install needs is fetched here
+once by [`scripts/prepare-offline-linux.sh`](../scripts/prepare-offline-linux.sh)
+and then consumed fully offline by
 [`scripts/install-linux.sh`](../scripts/install-linux.sh) — the Linux
 counterpart to [`installers/`](../installers/README.md) (Windows).
 
@@ -16,23 +15,31 @@ README is tracked. Resolved versions + SHA256 land in
 
 | Path | Source | Notes | Consumer |
 |---|---|---|---|
-| `python/cpython-3.11.*-x86_64-…-install_only.tar.gz` | github.com/astral-sh/python-build-standalone | newest 3.11, **SHA256-verified** | Python runtime |
-| `wheels/*.whl` | `pip wheel -r requirements.lock.txt` (built with the bundled Python) | cp311 / manylinux x86_64, matches the lock | probe deps |
-| `debs/*.deb` | `apt-get download` of the recursive closure | pipewire, wireplumber, x11-xserver-utils, mosquitto-clients + all deps (bookworm) | system packages |
+| `python/cpython-3.11.*-…-install_only.tar.gz` | github.com/astral-sh/python-build-standalone | newest 3.11, **SHA256-verified** (build-host arch) | Python runtime |
+| `wheels/*.whl` | `pip wheel -r requirements.lock.txt` (built with the bundled Python) | cp311 / manylinux, matches the lock | probe deps |
+| `debs/*.deb` | apt's solver, isolated apt-root against the **target** Debian repos | pipewire, wireplumber, x11-xserver-utils, mosquitto-clients + full closure | system packages |
 | `bundle.manifest.linux.json` | generated | versions + sha256 + lockHash + target codename/arch | build/install gates |
 
-## Build the bundle (once, on a bookworm/amd64 box with internet)
+## Build the bundle (once, on any Debian-based host with internet)
 
 ```bash
-bash scripts/prepare-offline-linux.sh            # fetch/refresh to newest
-bash scripts/prepare-offline-linux.sh --offline  # only validate what is present
-bash scripts/prepare-offline-linux.sh --force    # re-fetch everything
+bash scripts/prepare-offline-linux.sh                       # target Debian 13 (trixie), default
+bash scripts/prepare-offline-linux.sh --target-release bookworm   # Debian 12 instead
+bash scripts/prepare-offline-linux.sh --offline             # only validate what is present
+bash scripts/prepare-offline-linux.sh --force               # re-fetch everything
 ```
 
-Build host must be **bookworm/amd64** (the `.deb`s are release-specific, the
-wheels are cp311/manylinux x86_64). The script refuses a mismatched host unless
-`ALLOW_HOST_MISMATCH=1`. Network-tolerant: if a source is unreachable but the
-file is already present, it is kept.
+The **build host can be any Debian-based distro** (Debian, Ubuntu, Pop!_OS,
+Mint …) — the `.deb` closure is resolved against the **target** Debian release
+via an isolated apt-root (empty dpkg status ⇒ apt's own solver picks the full,
+correct closure), not against the host's own repos. No container, no chroot.
+
+- Default target: **Debian 13 “trixie”**. Override: `--target-release <codename>`,
+  `--mirror <url>`, `--keyring <path>` (env `PROBE_TARGET_RELEASE`).
+- On a **non-Debian** host (Ubuntu/Pop!_OS) the Debian archive keyring is needed
+  once: `sudo apt-get install debian-archive-keyring`.
+- The Python + wheels are built for the **build host's architecture** (amd64 or
+  arm64); cross-architecture bundling is out of scope.
 
 ## Install offline (no internet)
 

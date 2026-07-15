@@ -1,18 +1,20 @@
 # standalone-installer-linux/ — offline installer package (Linux)
 
 Builds a **self-contained, fully offline** installer for the Humboldt-Probe on
-Debian 12 (bookworm) x86_64 — the Linux counterpart to
-[`standalone-installer/`](../standalone-installer/README.md) (Windows).
+a Debian target (default **Debian 13 “trixie”**), amd64 or arm64 — the Linux
+counterpart to [`standalone-installer/`](../standalone-installer/README.md)
+(Windows).
 
 Copy one folder to a target kiosk, run `sudo ./install.sh`, and the probe is a
 running, boot-enabled systemd service — with **no internet and no apt repo** on
 the target.
 
-## Build the package (once, on a bookworm/amd64 box with internet)
+## Build the package (once, on any Debian-based host with internet)
 
 ```bash
-# 1. Fetch the offline bundle (standalone Python + wheels + .deb closure).
-bash scripts/prepare-offline-linux.sh
+# 1. Build the offline bundle (standalone Python + wheels + .deb closure).
+bash scripts/prepare-offline-linux.sh                     # target Debian 13 (trixie)
+#   or e.g. --target-release bookworm for Debian 12.
 
 # 2. Assemble the package (certs come from your vault, NOT the repo).
 bash standalone-installer-linux/build-standalone-installer-linux.sh \
@@ -22,10 +24,13 @@ bash standalone-installer-linux/build-standalone-installer-linux.sh \
 Output: `standalone-installer-linux/dist/HumboldtProbe-Setup-linux/` (+ `.tar.gz`
 with `--tar`). Both are gitignored — the package contains the fleet mTLS key.
 
-> **Build host must match the target release/arch** (bookworm/amd64). The bundled
-> `.deb`s are bookworm packages and the wheels are cp311/manylinux x86_64; a
-> package built elsewhere will not `dpkg`/`pip --no-index` cleanly on the kiosk.
-> A bookworm container works fine as the build host.
+> The **build host can be any Debian-based distro** (Debian, Ubuntu, Pop!_OS,
+> Mint …): `prepare-offline-linux.sh` resolves the `.deb` closure against the
+> **target** Debian release via an isolated apt-root, not the host's repos — no
+> container, no chroot. On a non-Debian host, install the Debian keyring once:
+> `sudo apt-get install debian-archive-keyring`. The Python + wheels are built
+> for the build host's **architecture**, so build on amd64 for amd64 kiosks
+> (arm64 for arm64) — cross-arch is out of scope.
 
 ## Install on the target (offline)
 

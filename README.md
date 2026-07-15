@@ -97,8 +97,11 @@ oder bei Fehler:
 - **Offline-Install:** Standalone-Python, pip-Wheels und die System-Pakete
   (pipewire/wireplumber/xrandr/mosquitto-clients + Dependency-Closure)
   werden von `scripts/prepare-offline-linux.sh` gebuendelt und von
-  `scripts/install-linux.sh` **ohne Internet/apt-Repo** installiert
-  (Debian 12 bookworm / x86_64; siehe [installers-linux/README.md](installers-linux/README.md))
+  `scripts/install-linux.sh` **ohne Internet/apt-Repo** installiert. Ziel per
+  Default **Debian 13 (trixie)**, per `--target-release` aenderbar; die `.deb`-
+  Closure wird via isoliertem apt-Root gegen die Ziel-Debian-Repos aufgeloest,
+  daher laeuft der Build auf **jeder Debian-basierten Distro** (Debian/Ubuntu/
+  Pop!_OS ...). amd64 oder arm64. Siehe [installers-linux/README.md](installers-linux/README.md).
 
 ### Windows
 
@@ -218,17 +221,21 @@ Installiert nach `/opt/humboldt-probe` (Config + Certs unter
 `/etc/humboldt-probe`). Zwei Offline-Wege, **ohne Internet/apt-Repo** — analog
 zum Windows-Weg:
 
-**Standalone-Installer** (beliebiger bookworm/amd64-Rechner, "einfach
+**Standalone-Installer** (Build auf beliebiger Debian-basierter Box, "einfach
 installieren"): Paket einmal bauen, auf den Zielrechner kopieren, `install.sh`
 als root ausfuehren. Siehe [standalone-installer-linux/](standalone-installer-linux/README.md).
 
 **Aus einem Checkout** (Dev / dieses Repo):
 
 ```bash
-bash scripts/prepare-offline-linux.sh   # einmalig, online (bookworm/amd64): Bundle nach installers-linux/ laden
+bash scripts/prepare-offline-linux.sh   # einmalig, online: Bundle nach installers-linux/ (Default-Ziel Debian 13 trixie; --target-release aenderbar)
 sudo bash scripts/install-linux.sh      # offline: .debs + Python + Deps + Service (Default srv-control-avm, Certs aus /etc/humboldt-probe/)
 systemctl status humboldt-probe         # bzw. start/stop/restart
 ```
+
+Der Build laeuft auf jeder Debian-basierten Distro (Debian/Ubuntu/Pop!_OS ...);
+die `.deb`-Closure kommt via isoliertem apt-Root aus den Ziel-Debian-Repos. Auf
+Nicht-Debian-Hosts einmalig `sudo apt-get install debian-archive-keyring`.
 
 `install-linux.sh` entpackt ein gebuendeltes Standalone-Python nach
 `/opt/humboldt-probe/python`, installiert die Deps offline hinein, legt den
